@@ -50,5 +50,14 @@ jobs:
           path: reports/
           retention-days: 7
 
+      - name: 🚀 部署到 GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: reports/
+          publish_branch: gh-pages
+          keep_files: false
+          full_commit_message: 每日复盘报告 ${{ github.run_id }}
+
       - name: 完成通知
-        run: echo "✅ 中证500每日复盘分析完成！"
+        run: echo "✅ 中证500每日复盘分析完成！报告已发布到 GitHub Pages"

@@ -25,6 +25,7 @@ from reporter import generate_report, save_report
 from visualizer import generate_all_charts
 from notifier import push_report
 from image_host import upload_images
+from report_html import generate_html_report
 
 
 def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bool = False):
@@ -108,6 +109,14 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
         # 生成可视化图表
         print(f"\n[Step 6/7] 生成可视化图表")
         chart_files = generate_all_charts(final_scores, klines)
+        
+        # 生成 HTML 报告（用于 GitHub Pages）
+        html_path = generate_html_report(
+            report_text=report_text,
+            top_stocks=top_stocks,
+            chart_files=chart_files,
+            report_date=trade_date,
+        )
         
         # 上传图表到图床，获取URL用于微信推送
         print(f"\n[图表上传] 上传到图床...")
