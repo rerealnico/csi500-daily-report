@@ -8,8 +8,13 @@ import time
 import pandas as pd
 import numpy as np
 import baostock as bs
-from config import FUNDAMENTAL_CONFIG
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, TimeoutError as _TimeoutError
+from pathlib import Path
+from datetime import datetime
+from config import FUNDAMENTAL_CONFIG, FUNDA_CACHE_FILE, CACHE_CONFIG
+
+# 单只股票基本面查询超时（秒）
+_STOCK_TIMEOUT = 30
 
 
 # ========== 财务数据获取 ==========
@@ -18,8 +23,7 @@ def _fetch_single_profit(code: str, year: int = 2025, quarter: int = 4) -> dict:
     """获取单只股票的利润表数据（ROE、净利润、EPS等）"""
     rs = bs.query_profit_data(code, year=year, quarter=quarter)
     while rs.next():
-        row = dict(zip(rs.fields, rs.get_row_data()))
-        return row
+        return dict(zip(rs.fields, rs.get_row_data()))
     return {}
 
 
@@ -45,13 +49,22 @@ def _to_bs_code(code: str) -> str:
     return f"sz.{code}"
 
 
-def _fetch_single_fundamental(bs_code: str, year: int, quarter: int) -> dict:
-    """并行用：获取单只股票的三张表数据"""
-    profit = _fetch_single_profit(bs_code, year, quarter)
-    if not profit:
-        return None
-    balance = _fetch_single_balance(bs_code, year, quarter)
-    cashflow = _fetch_single_cashflow(bs_code, year, quarter)
+
+
+def _fetch_single_fundamental(code: str, year: int = 2025, quarter: int = 4) -> dict:
+    """获取单只股票的基本面数据（独立login/query/logout）"""
+    lg = bs.login()
+    if lg.error_code != "0":
+        return {}
+    try:
+        profit = _fetch_single_profit(code, year, quarter)
+        balance = _fetch_single_balance(code, year, quarter)
+        cashflow = _fetch_single_cashflow(code, year, quarter)
+    finally:
+        bs.logout()
+
+    if not profit or not balance:
+        return {}
 
     def sf(v, default=None):
         try:
@@ -79,10 +92,9 @@ def fetch_fundamentals(
     year: int = 2025,
     quarter: int = 4,
     progress_callback=None,
-    max_workers: int = 10,
 ) -> pd.DataFrame:
     """
-    批量获取基本面数据（并行）
+    批量获取基本面数据（串行拉取避免并发封IP）
 
     Parameters
     ----------
@@ -96,54 +108,113 @@ def fetch_fundamentals(
     pd.DataFrame
         包含每只股票的基本面数据
     """
-    print(f"\n[基本面] 正在获取 {len(symbols)} 只股票的财务数据（并行{max_workers}线程）...")
+    print(f"\n[基本面] 正在获取 {len(symbols)} 只股票的财务数据...")
 
-    lg = bs.login()
-    if lg.error_code != "0":
-        raise ConnectionError(f"baostock 登录失败: {lg.error_msg}")
+    # 尝试加载缓存
+    cached_df = None
+    if FUNDA_CACHE_FILE.exists():
+        mtime = datetime.fromtimestamp(Path(FUNDA_CACHE_FILE).stat().st_mtime)
+        age_days = (datetime.now() - mtime).total_seconds() / 86400
+        if age_days <= CACHE_CONFIG["funda_max_age_days"]:
+            try:
+                cached_df = pd.read_parquet(FUNDA_CACHE_FILE)
+                cached_symbols = set(cached_df["symbol"].tolist())
+                need_fetch = [s for s in symbols if s not in cached_symbols]
+                if not need_fetch:
+                    print(f"  [缓存] 使用缓存数据 ({len(cached_df)} 条，{age_days:.0f}天前)")
+                    return cached_df[cached_df["symbol"].isin(symbols)].reset_index(drop=True)
+                print(f"  [缓存] 部分命中: {len(cached_symbols & set(symbols))} 只已缓存，需新获取 {len(need_fetch)} 只")
+            except Exception as e:
+                print(f"  [WARN] 缓存读取失败: {e}")
+                cached_df = None
+        else:
+            print(f"  [缓存] 缓存已过期 ({age_days:.0f}天 > {CACHE_CONFIG['funda_max_age_days']}天)")
+
+
 
     results = []
     total = len(symbols)
     fail_count = 0
 
+    _empty = {"roe": None, "np_margin": None, "gp_margin": None,
+               "net_profit": None, "eps_ttm": None, "revenue": None,
+               "liability_ratio": None, "asset_to_equity": None,
+               "cfo_to_np": None, "cfo_to_or": None, "has_data": False}
+
+    pool = ProcessPoolExecutor(max_workers=3)
+    futures = {}
+    idx = 0
+    completed = 0
+
+    # 初始批次——3个worker并行
+    while idx < total and len(futures) < 3:
+        bs_code = _to_bs_code(symbols[idx])
+        futures[pool.submit(_fetch_single_fundamental, bs_code, year, quarter)] = symbols[idx]
+        idx += 1
+
     try:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_fetch_single_fundamental, _to_bs_code(s), year, quarter): s
-                for s in symbols
-            }
-            done_count = 0
-            for future in as_completed(futures):
-                done_count += 1
-                symbol = futures[future]
+        while futures:
+            done, pending = wait(futures, return_when=FIRST_COMPLETED, timeout=_STOCK_TIMEOUT)
+
+            if not done:
+                for f in pending:
+                    sym = futures[f]
+                    print(f"  [WARN] {sym} 基本面超时（>{_STOCK_TIMEOUT}s），已跳过")
+                    fail_count += 1
+                    completed += 1
+                break
+
+            for f in done:
+                sym = futures.pop(f)
+                completed += 1
                 try:
-                    data = future.result()
+                    data = f.result()
                     if data:
-                        data["symbol"] = symbol
+                        data["symbol"] = sym
                         results.append(data)
                     else:
                         fail_count += 1
-                        results.append({
-                            "symbol": symbol,
-                            "roe": None, "np_margin": None, "gp_margin": None,
-                            "net_profit": None, "eps_ttm": None, "revenue": None,
-                            "liability_ratio": None, "asset_to_equity": None,
-                            "cfo_to_np": None, "cfo_to_or": None,
-                            "has_data": False,
-                        })
-                except Exception:
+                        d = {"symbol": sym}
+                        d.update(_empty)
+                        results.append(d)
+                except Exception as e:
                     fail_count += 1
+                    d = {"symbol": sym}
+                    d.update(_empty)
+                    results.append(d)
+                    print(f"  [WARN] {sym} 基本面异常: {e}")
 
-                if done_count % 50 == 0 or done_count == total:
-                    pct = done_count / total * 100
-                    print(f"  [进度] {done_count}/{total} ({pct:.0f}%) | 失败: {fail_count}")
+                if completed % 50 == 0 or completed == total:
+                    pct = completed / total * 100
+                    print(f"  [进度] {completed}/{total} ({pct:.0f}%) | 失败: {fail_count}")
                     if progress_callback:
-                        progress_callback(done_count, total)
+                        progress_callback(completed, total)
+
+            while idx < total and len(futures) < 3:
+                bs_code = _to_bs_code(symbols[idx])
+                futures[pool.submit(_fetch_single_fundamental, bs_code, year, quarter)] = symbols[idx]
+                idx += 1
+
+            time.sleep(0.05)
     finally:
-        bs.logout()
+        pool.shutdown(wait=False)
 
     df = pd.DataFrame(results)
     print(f"  [OK] 基本面数据获取完成，{len(df) - fail_count}/{total} 成功")
+
+    # 保存缓存
+    try:
+        # 如果有旧缓存，合并后保存
+        if cached_df is not None and not cached_df.empty:
+            combined = pd.concat([cached_df, df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["symbol"], keep="last")
+            combined.to_parquet(FUNDA_CACHE_FILE, index=False)
+        else:
+            df.to_parquet(FUNDA_CACHE_FILE, index=False)
+        print(f"  [缓存] 已保存 {len(df)} 条到 {FUNDA_CACHE_FILE.name}")
+    except Exception as e:
+        print(f"  [WARN] 缓存保存失败: {e}")
+
     return df
 
 
@@ -293,11 +364,14 @@ def diagnose_stock(symbol: str) -> dict:
         诊断结果，含3年财务趋势
     """
     bs_code = _to_bs_code(symbol)
-    lg = bs.login()
 
     result = {"symbol": symbol, "years": {}}
 
     try:
+        lg = bs.login()
+        if lg.error_code != "0":
+            raise ConnectionError(f"baostock 登录失败: {lg.error_msg}")
+
         for year in [2025, 2024, 2023]:
             profit = _fetch_single_profit(bs_code, year, 4)
             balance = _fetch_single_balance(bs_code, year, 4)
@@ -343,6 +417,7 @@ def print_diagnosis(diagnosis: dict):
         ("净利率", "np_margin", "%", lambda x: f"{x*100:.1f}" if x else "N/A"),
         ("毛利率", "gp_margin", "%", lambda x: f"{x*100:.1f}" if x else "N/A"),
         ("净利润(亿)", "net_profit", "", lambda x: f"{x/1e8:.2f}" if x else "N/A"),
+        ("营收增长率", None, "%", None),  # 特殊处理：YoY对比
         ("EPS_TTM", "eps_ttm", "", lambda x: f"{x:.3f}" if x else "N/A"),
         ("营收(亿)", "revenue", "", lambda x: f"{x/1e8:.2f}" if x else "N/A"),
         ("负债率", "liability_ratio", "%", lambda x: f"{x*100:.1f}" if x else "N/A"),
@@ -350,10 +425,42 @@ def print_diagnosis(diagnosis: dict):
     ]
 
     for label, key, unit, fmt in rows:
-        vals = []
-        for y in ["2023", "2024", "2025"]:
-            v = years.get(y, {}).get(key)
-            vals.append(fmt(v))
+        if key is None:
+            # 营收增长率：特殊计算（YoY）
+            revs = []
+            for y in ["2023", "2024", "2025"]:
+                v = years.get(y, {}).get("revenue")
+                revs.append(v)
+            growth_vals = []
+            for i in range(1, len(revs)):
+                if revs[i-1] and revs[i] and revs[i-1] != 0:
+                    g = (revs[i] - revs[i-1]) / abs(revs[i-1]) * 100
+                    growth_vals.append(f"{g:.1f}")
+                else:
+                    growth_vals.append("N/A")
+            # 3列显示: 前两个为增长率，第3列空白
+            vals = [growth_vals[0] if len(growth_vals) > 0 else "N/A",
+                    growth_vals[1] if len(growth_vals) > 1 else "N/A",
+                    ""]
+            # 趋势
+            num_g = []
+            for v in growth_vals:
+                if v != "N/A":
+                    num_g.append(float(v))
+            trend = "—"
+            if len(num_g) >= 2:
+                if num_g[-1] > num_g[0] + 5:
+                    trend = "↑"
+                elif num_g[-1] < num_g[0] - 5:
+                    trend = "↓"
+                else:
+                    trend = "→"
+            print(f"  {label:<20} {vals[0]:>10} {vals[1]:>10} {vals[2]:>10} {trend:>8}")
+        else:
+            vals = []
+            for y in ["2023", "2024", "2025"]:
+                v = years.get(y, {}).get(key)
+                vals.append(fmt(v))
 
         # 趋势判断
         num_vals = []
@@ -393,6 +500,39 @@ def print_diagnosis(diagnosis: dict):
         print(f"  [WARN] 风险提示: {' | '.join(issues)}")
     else:
         print(f"  [OK] 基本面正常")
+
+
+def diagnosis_to_html(diagnosis: dict) -> str:
+    """输出个股诊断的 HTML 片段"""
+    symbol = diagnosis["symbol"]
+    years = diagnosis["years"]
+
+    rows_html = ""
+    fields = [
+        ("ROE", "roe", "{:.1f}%", lambda x: x * 100 if x is not None else None),
+        ("净利率", "np_margin", "{:.1f}%", lambda x: x * 100 if x is not None else None),
+        ("毛利率", "gp_margin", "{:.1f}%", lambda x: x * 100 if x is not None else None),
+        ("净利润(亿)", "net_profit", "{:.2f}", lambda x: x / 1e8 if x is not None else None),
+        ("营收(亿)", "revenue", "{:.2f}", lambda x: x / 1e8 if x is not None else None),
+        ("负债率", "liability_ratio", "{:.1f}%", lambda x: x * 100 if x is not None else None),
+    ]
+
+    for label, key, fmt, transform in fields:
+        vals = []
+        for y in ["2023", "2024", "2025"]:
+            v = years.get(y, {}).get(key)
+            tv = transform(v) if v is not None else None
+            vals.append(fmt.format(tv) if tv is not None else "N/A")
+        rows_html += f"<tr><td>{label}</td><td>{vals[0]}</td><td>{vals[1]}</td><td>{vals[2]}</td></tr>\n"
+
+    html = f"""<div class="diagnosis-section">
+<h3>🔍 个股诊断: {symbol}</h3>
+<table>
+<thead><tr><th>指标</th><th>2023</th><th>2024</th><th>2025</th></tr></thead>
+<tbody>{rows_html}</tbody>
+</table>
+</div>"""
+    return html
 
 
 if __name__ == "__main__":

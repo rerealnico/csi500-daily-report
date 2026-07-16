@@ -8,8 +8,12 @@ import pandas as pd
 import akshare as ak
 import baostock as bs
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import CSI500_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, TimeoutError as _TimeoutError
+from pathlib import Path
+from config import CSI500_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE, CACHE_CONFIG
+
+# 单只股票 baostock 查询超时（秒），防止个别退市/异常股票无限挂起
+_STOCK_TIMEOUT = 30
 
 
 # ========== 成分股获取（akshare） ==========
@@ -53,43 +57,44 @@ def _to_bs_code(code: str) -> str:
 
 # ========== 日线行情获取（baostock） ==========
 
-def _fetch_single_bs_klines(
-    symbol: str, start_date: str, end_date: str
-) -> pd.DataFrame:
-    """通过 baostock 获取单只股票日线（含 PE/PB），无惧限流"""
+
+def _fetch_single_bs_klines(symbol: str, start: str, end: str) -> pd.DataFrame | None:
+    """单只股票日线行情（独立login/query/logout，自带超时保护）"""
     bs_code = _to_bs_code(symbol)
+    lg = bs.login()
+    if lg.error_code != "0":
+        return None
     try:
         rs = bs.query_history_k_data_plus(
             bs_code,
-            "date,open,close,high,low,volume,amount,turn,pctChg,peTTM,pbMRQ",
-            start_date=start_date, end_date=end_date,
-            frequency="d", adjustflag="2"
+            "date,open,high,low,close,volume,amount,turn,pctChg,peTTM,pbMRQ",
+            start_date=start, end_date=end,
+            frequency="d", adjustflag="3",
         )
         rows = []
         while rs.next():
-            rows.append(rs.get_row_data())
+            rows.append(dict(zip(rs.fields, rs.get_row_data())))
+    finally:
+        bs.logout()
 
-        if not rows:
-            return pd.DataFrame()
+    if not rows:
+        return None
 
-        df = pd.DataFrame(rows, columns=[
-            "date", "open", "close", "high", "low",
-            "volume", "amount", "turnover", "pct_chg", "pe", "pb"
-        ])
-        df["symbol"] = symbol
-        df["date"] = pd.to_datetime(df["date"])
-        for col in ["open", "close", "high", "low", "volume",
-                    "amount", "turnover", "pct_chg", "pe", "pb"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        return df
-    except Exception as e:
-        print(f"  [WARN] {symbol} 获取失败: {e}")
-        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    for col in ["open", "high", "low", "close", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.rename(columns={
+        "peTTM": "pe", "pbMRQ": "pb",
+        "turn": "turnover", "pctChg": "pct_chg",
+    })
+    df["date"] = pd.to_datetime(df["date"])
+    df["symbol"] = symbol
+    return df
 
 
-def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2, max_workers: int = 10) -> pd.DataFrame:
+def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2) -> pd.DataFrame:
     """
-    WARNING: 批量获取个股日线行情（baostock，含PE/PB）
+    批量获取个股日线行情（baostock，含PE/PB）— 串行拉取避免并发封IP
     - 有缓存 → 增量拉取（只补最新数据）
     - 无缓存 → 全量拉取 years 年
     """
@@ -99,13 +104,28 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2,
     # 尝试加载缓存
     cached_df = None
     if KLINE_CACHE_FILE.exists():
-        print(f"[数据获取] 发现缓存文件，尝试增量更新...")
-        try:
-            cached_df = pd.read_parquet(KLINE_CACHE_FILE)
-            print(f"  [OK] 缓存包含 {cached_df['symbol'].nunique()} 只股票, {len(cached_df)} 条记录")
-        except Exception as e:
-            print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
-            cached_df = None
+        # 检查缓存是否过期
+        mtime = datetime.fromtimestamp(Path(KLINE_CACHE_FILE).stat().st_mtime)
+        age_hours = (datetime.now() - mtime).total_seconds() / 3600
+        if age_hours > CACHE_CONFIG["kline_max_age_hours"]:
+            print(f"  [缓存] 缓存已过期 ({age_hours:.0f}小时 > {CACHE_CONFIG['kline_max_age_hours']}小时)，全量刷新")
+        else:
+            print(f"[数据获取] 发现缓存文件，尝试增量更新...")
+            try:
+                cached_df = pd.read_parquet(KLINE_CACHE_FILE)
+                print(f"  [OK] 缓存包含 {cached_df['symbol'].nunique()} 只股票, {len(cached_df)} 条记录")
+            except Exception as e:
+                print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
+                cached_df = None
+
+    if cached_df is not None and not cached_df.empty:
+        # 检查缓存是否覆盖了所有请求的股票
+        cached_symbols = set(cached_df["symbol"].unique())
+        requested_symbols = set(symbols)
+        if not requested_symbols.issubset(cached_symbols):
+            missing = len(requested_symbols - cached_symbols)
+            print(f"  [缓存] 缓存缺 {missing} 只股票，自动切换全量模式")
+            cached_df = None  # 回退全量（让下面的else处理）
 
     if cached_df is not None and not cached_df.empty:
         # 增量模式：只拉缓存中最新日期之后的数据
@@ -123,38 +143,57 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2,
         print(f"[数据获取] 全量拉取 {len(symbols)} 只股票（{start} ~ {end}）...")
         is_incremental = False
 
-    lg = bs.login()
-    if lg.error_code != "0":
-        raise ConnectionError(f"baostock 登录失败: {lg.error_msg}")
-
     all_dfs = []
     fail_count = 0
     total = len(symbols)
 
+    pool = ProcessPoolExecutor(max_workers=3)
+    futures = {}
+    idx = 0
+    completed = 0
+
+    # 初始批次——3个worker并行
+    while idx < total and len(futures) < 3:
+        futures[pool.submit(_fetch_single_bs_klines, symbols[idx], start, end)] = symbols[idx]
+        idx += 1
+
     try:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_fetch_single_bs_klines, symbol, start, end): symbol
-                for symbol in symbols
-            }
-            done_count = 0
-            for future in as_completed(futures):
-                done_count += 1
-                symbol = futures[future]
+        while futures:
+            done, pending = wait(futures, return_when=FIRST_COMPLETED, timeout=_STOCK_TIMEOUT)
+
+            if not done:
+                # 3个worker全部挂起（极低概率），跳过剩余
+                for f in pending:
+                    sym = futures[f]
+                    print(f"  [WARN] {sym} 超时（>{_STOCK_TIMEOUT}s），已跳过")
+                    fail_count += 1
+                    completed += 1
+                break
+
+            for f in done:
+                sym = futures.pop(f)
+                completed += 1
                 try:
-                    df = future.result()
+                    df = f.result()  # 已完成，无需wait
                     if df is not None and not df.empty:
                         all_dfs.append(df)
                     else:
                         fail_count += 1
                 except Exception as e:
                     fail_count += 1
-                    print(f"  [WARN] {symbol} 线程异常: {e}")
+                    print(f"  [WARN] {sym} 异常: {e}")
 
-                if done_count % 50 == 0 or done_count == total:
-                    print(f"  [进度] {done_count}/{total} (失败: {fail_count})")
+                if completed % 50 == 0 or completed == total:
+                    print(f"  [进度] {completed}/{total} (失败: {fail_count})")
+
+            # 补充新任务，保持3并发
+            while idx < total and len(futures) < 3:
+                futures[pool.submit(_fetch_single_bs_klines, symbols[idx], start, end)] = symbols[idx]
+                idx += 1
+
+            time.sleep(0.05)
     finally:
-        bs.logout()
+        pool.shutdown(wait=False)
 
     if not all_dfs and cached_df is None:
         raise ValueError("未获取到任何股票数据")

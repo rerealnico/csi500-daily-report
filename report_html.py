@@ -19,6 +19,37 @@ def _img_to_b64(filepath: str) -> str:
     return f"data:image/{mime};base64,{data}"
 
 
+def _classify_board(symbol: str) -> str:
+    """根据代码前缀判断板块：000=主板, 002=中小板, 300=创业板, 688=科创板, 其他=未知"""
+    if symbol.startswith("6"):
+        return "主板"
+    elif symbol.startswith("00"):
+        return "主板"
+    elif symbol.startswith("002"):
+        return "中小板"
+    elif symbol.startswith("300"):
+        return "创业板"
+    elif symbol.startswith("688"):
+        return "科创板"
+    else:
+        return "其他"
+
+
+def _build_industry_distribution(top_stocks: list) -> str:
+    """分析推荐股票的板块分布，返回 HTML 卡片"""
+    boards = {}
+    for stock in top_stocks:
+        symbol = stock.get("symbol", "")
+        board = _classify_board(symbol)
+        boards[board] = boards.get(board, 0) + 1
+
+    cards = ""
+    for board in ["主板", "中小板", "创业板", "科创板"]:
+        count = boards.get(board, 0)
+        cards += f'<div class="summary-card"><div class="num">{count}</div><div class="label">{board}</div></div>\n'
+    return cards
+
+
 def generate_html_report(
     report_text: str,
     top_stocks: list,
@@ -115,48 +146,78 @@ def generate_html_report(
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
-            background: #f5f6fa;
+            background: #f0f2f5;
             color: #2d3436;
             line-height: 1.6;
+            transition: background 0.3s, color 0.3s;
         }}
         .container {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
 
-        /* Header */
+        /* Header - Gradient */
         .header {{
-            background: linear-gradient(135deg, #1976D2, #1565C0);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            border-radius: 12px;
-            padding: 32px;
+            border-radius: 16px;
+            padding: 36px 32px;
             margin-bottom: 24px;
             text-align: center;
+            box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
         }}
         .header h1 {{ font-size: 24px; margin-bottom: 8px; }}
         .header .date {{ font-size: 14px; opacity: 0.85; }}
         .header .sub {{ font-size: 13px; opacity: 0.7; margin-top: 4px; }}
 
+        /* Dark Mode Toggle */
+        .theme-toggle {{
+            position: fixed; top: 16px; right: 16px; z-index: 999;
+            background: rgba(255,255,255,0.2); backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white; width: 40px; height: 40px; border-radius: 50%;
+            cursor: pointer; font-size: 18px;
+            transition: all 0.3s;
+        }}
+        .theme-toggle:hover {{ background: rgba(255,255,255,0.3); transform: scale(1.1); }}
+
         /* Summary cards */
         .summary {{ display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }}
         .summary-card {{
-            flex: 1; min-width: 140px;
-            background: white; border-radius: 10px; padding: 18px 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            flex: 1; min-width: 120px;
+            background: white; border-radius: 12px; padding: 18px 16px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
             text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
         }}
-        .summary-card .num {{ font-size: 28px; font-weight: bold; color: #1976D2; }}
+        .summary-card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }}
+        .summary-card .num {{ font-size: 28px; font-weight: bold; color: #667eea; }}
         .summary-card .label {{ font-size: 13px; color: #636e72; margin-top: 4px; }}
 
-        /* Table */
-        .section {{ background: white; border-radius: 10px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+        /* Sections */
+        .section {{
+            background: white; border-radius: 12px; padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            transition: box-shadow 0.2s;
+        }}
+        .section:hover {{ box-shadow: 0 8px 32px rgba(0,0,0,0.1); }}
         .section h2 {{ font-size: 18px; margin-bottom: 16px; color: #2d3436; }}
+
+        /* Table - Sortable */
         table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
         th {{
             background: #f8f9fa; color: #636e72; font-weight: 600;
             padding: 10px 8px; text-align: left; border-bottom: 2px solid #e9ecef;
             font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+            cursor: pointer; user-select: none;
+            white-space: nowrap;
+            transition: background 0.2s;
         }}
+        th:hover {{ background: #eef1f5; }}
+        th.sort-asc::after {{ content: " \25B2"; font-size: 10px; }}
+        th.sort-desc::after {{ content: " \25BC"; font-size: 10px; }}
         td {{ padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }}
-        tr:hover {{ background: #f8f9ff; }}
-        .rank {{ font-weight: bold; color: #1976D2; width: 30px; text-align: center; }}
+        tr:hover {{ background: #f0f4ff; }}
+        tr {{ transition: background 0.15s; }}
+        .rank {{ font-weight: bold; color: #667eea; width: 30px; text-align: center; }}
         .name {{ min-width: 100px; }}
         .name .code {{ font-size: 11px; color: #b2bec3; margin-left: 4px; }}
         .score-main {{ font-weight: bold; color: #2d3436; }}
@@ -166,13 +227,15 @@ def generate_html_report(
         .tag {{
             display: inline-block; padding: 2px 10px; border-radius: 12px;
             font-size: 11px; font-weight: 500;
+            transition: transform 0.2s;
         }}
-        .tag-推荐关注 {{ background: #00b894; color: white; }}
-        .tag-可以关注 {{ background: #00cec9; color: white; }}
-        .tag-持有观望 {{ background: #fdcb6e; color: #2d3436; }}
-        .tag-谨慎观察 {{ background: #e17055; color: white; }}
-        .tag-注意风险 {{ background: #d63031; color: white; }}
-        .tag-亏损暂避 {{ background: #636e72; color: white; }}
+        .tag:hover {{ transform: scale(1.05); }}
+        .tag-\u63a8\u8350\u5173\u6ce8 {{ background: #00b894; color: white; }}
+        .tag-\u53ef\u4ee5\u5173\u6ce8 {{ background: #00cec9; color: white; }}
+        .tag-\u6301\u6709\u89c2\u671b {{ background: #fdcb6e; color: #2d3436; }}
+        .tag-\u8c28\u614e\u89c2\u5bdf {{ background: #e17055; color: white; }}
+        .tag-\u6ce8\u610f\u98ce\u9669 {{ background: #d63031; color: white; }}
+        .tag-\u4e8f\u635f\u6682\u907f {{ background: #636e72; color: white; }}
 
         /* Charts */
         .charts-section h2 {{ margin-bottom: 16px; }}
@@ -182,13 +245,68 @@ def generate_html_report(
         .charts-grid img {{
             width: 100%; border-radius: 8px; border: 1px solid #e9ecef;
             box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            cursor: zoom-in;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+        .charts-grid img:hover {{
+            transform: scale(1.01);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        }}
+
+        /* Lightbox */
+        .lightbox {{
+            display: none; position: fixed; z-index: 9999;
+            left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9);
+            cursor: zoom-out;
+        }}
+        .lightbox img {{
+            max-width: 90%; max-height: 90%;
+            margin: auto; position: absolute;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            border-radius: 8px;
         }}
 
         /* Footer */
         .footer {{
             text-align: center; padding: 20px; color: #b2bec3; font-size: 12px;
         }}
+        .footer .info {{ margin-top: 8px; font-size: 11px; line-height: 1.7; }}
 
+        /* Dark Mode */
+        @media (prefers-color-scheme: dark) {{
+            body.dark-mode, body:not(.light-mode) {{ background: #1a1b2e; color: #dfe6e9; }}
+            body.dark-mode .section, body:not(.light-mode) .section,
+            body.dark-mode .summary-card, body:not(.light-mode) .summary-card {{
+                background: #2d2d44; color: #dfe6e9;
+            }}
+            body.dark-mode .section h2, body:not(.light-mode) .section h2 {{ color: #dfe6e9; }}
+            body.dark-mode th, body:not(.light-mode) th {{
+                background: #3d3d56; color: #b2bec3;
+            }}
+            body.dark-mode td, body:not(.light-mode) td {{ border-bottom-color: #3d3d56; }}
+            body.dark-mode tr:hover, body:not(.light-mode) tr:hover {{ background: #3d3d56; }}
+            body.dark-mode .summary-card .label,
+            body:not(.light-mode) .summary-card .label {{ color: #b2bec3; }}
+            body.dark-mode .name .code,
+            body:not(.light-mode) .name .code {{ color: #636e72; }}
+            body.dark-mode .score-main,
+            body:not(.light-mode) .score-main {{ color: #dfe6e9; }}
+        }}
+
+        /* Explicit dark mode override */
+        body.dark-mode {{ background: #1a1b2e; color: #dfe6e9; }}
+        body.dark-mode .section,
+        body.dark-mode .summary-card {{ background: #2d2d44; color: #dfe6e9; }}
+        body.dark-mode .section h2 {{ color: #dfe6e9; }}
+        body.dark-mode th {{ background: #3d3d56; color: #b2bec3; }}
+        body.dark-mode td {{ border-bottom-color: #3d3d56; }}
+        body.dark-mode tr:hover {{ background: #3d3d56; }}
+        body.dark-mode .summary-card .label {{ color: #b2bec3; }}
+        body.dark-mode .name .code {{ color: #636e72; }}
+        body.dark-mode .score-main {{ color: #dfe6e9; }}
+
+        /* Responsive */
         @media (max-width: 600px) {{
             .container {{ padding: 10px; }}
             .header {{ padding: 20px; }}
@@ -197,16 +315,18 @@ def generate_html_report(
             table {{ font-size: 12px; }}
             td, th {{ padding: 6px 4px; }}
             .chart-half {{ min-width: 100%; }}
+            .section {{ padding: 16px; }}
         }}
     </style>
 </head>
 <body>
     <div class="container">
         <!-- Header -->
+        <button class="theme-toggle" onclick="toggleDarkMode()" title="切换暗色模式">🌙</button>
         <div class="header">
             <h1>📈 中证500 每日复盘报告</h1>
             <div class="date">报告日期: {report_date}</div>
-            <div class="sub">数据来源: baostock | 评分模型: 估值+基本面+量能+动量</div>
+            <div class="sub">数据来源: baostock | 评分模型: 估值+基本面+量能+动量+资金流</div>
         </div>
 
         <!-- Summary -->
@@ -223,6 +343,7 @@ def generate_html_report(
                 <div class="num">{top_stocks[0].get('stock_name', '-') if top_stocks else '-'}</div>
                 <div class="label">冠军股票</div>
             </div>
+            {_build_industry_distribution(top_stocks)}
         </div>
 
         <!-- Top Stocks Table -->
@@ -261,8 +382,74 @@ def generate_html_report(
 
         <div class="footer">
             自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · GitHub Actions
+            <div class="info">
+                📊 数据来源: baostock (日线行情+财务数据) ｜ akshare (成分股列表)<br>
+                📈 评分模型: 估值(25%) + 基本面(25%) + 量能(25%) + 动量(15%) + 资金流(10%)<br>
+                ⚠️ 本报告仅供参考，不构成投资建议
+            </div>
         </div>
     </div>
+
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" onclick="this.style.display='none'">
+        <img id="lightbox-img" src="" alt="放大查看">
+    </div>
+
+    <script>
+    // 暗色模式切换
+    function toggleDarkMode() {{
+        var body = document.body;
+        body.classList.toggle('dark-mode');
+        var btn = document.querySelector('.theme-toggle');
+        btn.textContent = body.classList.contains('dark-mode') ? '☀️' : '🌙';
+        localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark' : 'light');
+    }}
+    // 恢复上次主题
+    if (localStorage.getItem('theme') === 'dark') {{
+        document.body.classList.add('dark-mode');
+        document.querySelector('.theme-toggle').textContent = '☀️';
+    }}
+
+    // 图片点击放大 (Lightbox)
+    document.addEventListener('click', function(e) {{
+        var img = e.target.closest('.charts-grid img');
+        if (img) {{
+            document.getElementById('lightbox-img').src = img.src;
+            document.getElementById('lightbox').style.display = 'block';
+        }}
+    }});
+
+    // 表格排序
+    document.addEventListener('DOMContentLoaded', function() {{
+        document.querySelectorAll('table th').forEach(function(th, index) {{
+            th.addEventListener('click', function() {{
+                var table = th.closest('table');
+                var tbody = table.querySelector('tbody');
+                var rows = Array.from(tbody.querySelectorAll('tr'));
+                var dir = th.classList.contains('sort-asc') ? -1 : 1;
+
+                // 清除其他列的排序状态
+                table.querySelectorAll('th').forEach(function(h) {{
+                    h.classList.remove('sort-asc', 'sort-desc');
+                }});
+
+                rows.sort(function(a, b) {{
+                    var aVal = a.children[index].textContent.trim();
+                    var bVal = b.children[index].textContent.trim();
+                    var aNum = parseFloat(aVal.replace(/[^0-9.-]/g, ''));
+                    var bNum = parseFloat(bVal.replace(/[^0-9.-]/g, ''));
+                    if (!isNaN(aNum) && !isNaN(bNum)) {{
+                        return (aNum - bNum) * dir;
+                    }}
+                    return aVal.localeCompare(bVal) * dir;
+                }});
+
+                rows.forEach(function(row) {{ tbody.appendChild(row); }});
+                th.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+            }});
+        }});
+    }});
+    </script>
 </body>
 </html>"""
 

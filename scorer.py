@@ -11,6 +11,7 @@ def calculate_final_scores(
     valuation_scores: pd.DataFrame,
     volume_scores: pd.DataFrame,
     fundamental_scores: pd.DataFrame = None,
+    capital_flow_scores: pd.DataFrame = None,
 ) -> pd.DataFrame:
     """
     多因子综合评分
@@ -25,6 +26,8 @@ def calculate_final_scores(
         量能评分结果
     fundamental_scores : pd.DataFrame, optional
         基本面评分结果
+    capital_flow_scores : pd.DataFrame, optional
+        资金流评分结果
 
     Returns
     -------
@@ -66,6 +69,16 @@ def calculate_final_scores(
             on="symbol", how="left"
         )
 
+    # 合并资金流
+    if capital_flow_scores is not None and not capital_flow_scores.empty:
+        cf_cols = ["symbol", "capital_flow_score"]
+        cf_extra = [c for c in capital_flow_scores.columns
+                     if c not in merged.columns and c != "symbol" and c not in cf_cols]
+        merged = merged.merge(
+            capital_flow_scores[cf_cols + cf_extra].reset_index(drop=True),
+            on="symbol", how="left"
+        )
+
     # 2. 确保索引无重复
     merged = merged.reset_index(drop=True)
 
@@ -73,6 +86,7 @@ def calculate_final_scores(
     merged["valuation_score"] = merged.get("valuation_score", 50).fillna(50).astype(float)
     merged["volume_score"] = merged.get("volume_score", 50).fillna(50).astype(float)
     merged["fundamental_score"] = merged.get("fundamental_score", 50).fillna(50).astype(float)
+    merged["capital_flow_score"] = merged.get("capital_flow_score", 50).fillna(50).astype(float)
 
     # 4. 动量因子：用价格趋势计算
     if "price_trend_5d" in merged.columns:
@@ -88,6 +102,7 @@ def calculate_final_scores(
         + SCORE_WEIGHTS["fundamental"] * merged["fundamental_score"].values
         + SCORE_WEIGHTS["volume"] * merged["volume_score"].values
         + SCORE_WEIGHTS["momentum"] * merged["momentum_score"].values
+        + SCORE_WEIGHTS["capital_flow"] * merged["capital_flow_score"].values
     )
 
     # 6. 亏损股标记（来自基本面）

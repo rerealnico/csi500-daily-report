@@ -56,16 +56,7 @@ def main_handler(event, context):
         error_msg = f"{type(e).__name__}: {e}"
         traceback.print_exc()
         print(f"[SCF] 执行失败: {error_msg}")
-
-        # 尝试推送错误信息
-        try:
-            from notifier import push_report
-            push_report(
-                f"[SCF 执行失败]\n{error_msg}\n\n{traceback.format_exc()}",
-                report_date="",
-            )
-        except Exception:
-            pass
+        print(f"[SCF] 详细错误:\n{traceback.format_exc()}")
 
         return {
             "code": -1,
