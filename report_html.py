@@ -216,7 +216,7 @@ def generate_html_report(
                 <div class="label">推荐关注</div>
             </div>
             <div class="summary-card">
-                <div class="num">{top_stocks[0]['total_score']:.1f if top_stocks else 0}</div>
+                <div class="num">{f"{top_stocks[0]['total_score']:.1f}" if top_stocks else '0'}</div>
                 <div class="label">最高评分</div>
             </div>
             <div class="summary-card">
