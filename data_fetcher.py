@@ -8,6 +8,7 @@ import pandas as pd
 import akshare as ak
 import baostock as bs
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import CSI500_INDEX_CODE, DATA_DIR
 
 
@@ -86,10 +87,10 @@ def _fetch_single_bs_klines(
         return pd.DataFrame()
 
 
-def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 5) -> pd.DataFrame:
+def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2, max_workers: int = 10) -> pd.DataFrame:
     """
     批量获取个股日线行情（baostock，含PE/PB）
-    500只股票约需 3~5 分钟
+    使用 ThreadPoolExecutor 并行拉取
     """
     if end_date is None:
         end_date = datetime.now().strftime("%Y%m%d")
@@ -101,26 +102,38 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 5)
     start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
     end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
 
-    all_dfs = []
-    total = len(symbols)
-    fail_count = 0
-
-    print(f"[数据获取] 正在拉取 {total} 只股票的日线行情（baostock）...")
+    print(f"[数据获取] 正在拉取 {len(symbols)} 只股票的日线行情（baostock, 并发{max_workers}线程）...")
 
     lg = bs.login()
     if lg.error_code != "0":
         raise ConnectionError(f"baostock 登录失败: {lg.error_msg}")
 
-    try:
-        for i, symbol in enumerate(symbols):
-            df = _fetch_single_bs_klines(symbol, start, end)
-            if df is not None and not df.empty:
-                all_dfs.append(df)
-            else:
-                fail_count += 1
+    all_dfs = []
+    fail_count = 0
+    total = len(symbols)
 
-            if (i + 1) % 50 == 0 or (i + 1) == total:
-                print(f"  [进度] {i+1}/{total} (失败: {fail_count})")
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_fetch_single_bs_klines, symbol, start, end): symbol
+                for symbol in symbols
+            }
+            done_count = 0
+            for future in as_completed(futures):
+                done_count += 1
+                symbol = futures[future]
+                try:
+                    df = future.result()
+                    if df is not None and not df.empty:
+                        all_dfs.append(df)
+                    else:
+                        fail_count += 1
+                except Exception as e:
+                    fail_count += 1
+                    print(f"  [WARN] {symbol} 线程异常: {e}")
+
+                if done_count % 50 == 0 or done_count == total:
+                    print(f"  [进度] {done_count}/{total} (失败: {fail_count})")
     finally:
         bs.logout()
 

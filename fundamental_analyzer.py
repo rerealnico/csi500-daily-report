@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import baostock as bs
 from config import FUNDAMENTAL_CONFIG
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ========== 财务数据获取 ==========
@@ -44,14 +45,44 @@ def _to_bs_code(code: str) -> str:
     return f"sz.{code}"
 
 
+def _fetch_single_fundamental(bs_code: str, year: int, quarter: int) -> dict:
+    """并行用：获取单只股票的三张表数据"""
+    profit = _fetch_single_profit(bs_code, year, quarter)
+    if not profit:
+        return None
+    balance = _fetch_single_balance(bs_code, year, quarter)
+    cashflow = _fetch_single_cashflow(bs_code, year, quarter)
+
+    def sf(v, default=None):
+        try:
+            return float(v) if v and v != "" else default
+        except (ValueError, TypeError):
+            return default
+
+    return {
+        "roe": sf(profit.get("roeAvg")),
+        "np_margin": sf(profit.get("npMargin")),
+        "gp_margin": sf(profit.get("gpMargin")),
+        "net_profit": sf(profit.get("netProfit")),
+        "eps_ttm": sf(profit.get("epsTTM")),
+        "revenue": sf(profit.get("MBRevenue")),
+        "liability_ratio": sf(balance.get("liabilityToAsset")),
+        "asset_to_equity": sf(balance.get("assetToEquity")),
+        "cfo_to_np": sf(cashflow.get("CFOToNP")),
+        "cfo_to_or": sf(cashflow.get("CFOToOR")),
+        "has_data": True,
+    }
+
+
 def fetch_fundamentals(
     symbols: list[str],
     year: int = 2025,
     quarter: int = 4,
     progress_callback=None,
+    max_workers: int = 10,
 ) -> pd.DataFrame:
     """
-    批量获取基本面数据
+    批量获取基本面数据（并行）
 
     Parameters
     ----------
@@ -65,7 +96,7 @@ def fetch_fundamentals(
     pd.DataFrame
         包含每只股票的基本面数据
     """
-    print(f"\n[基本面] 正在获取 {len(symbols)} 只股票的财务数据...")
+    print(f"\n[基本面] 正在获取 {len(symbols)} 只股票的财务数据（并行{max_workers}线程）...")
 
     lg = bs.login()
     if lg.error_code != "0":
@@ -76,71 +107,38 @@ def fetch_fundamentals(
     fail_count = 0
 
     try:
-        for i, symbol in enumerate(symbols):
-            bs_code = _to_bs_code(symbol)
-
-            # 利润表（核心）
-            profit = _fetch_single_profit(bs_code, year, quarter)
-            if not profit:
-                fail_count += 1
-                results.append({
-                    "symbol": symbol,
-                    "roe": None, "np_margin": None, "gp_margin": None,
-                    "net_profit": None, "eps_ttm": None,
-                    "revenue": None,
-                    "liability_ratio": None,
-                    "cfo_to_np": None,
-                    "has_data": False,
-                })
-                continue
-
-            # 资产负债表（负债率）
-            balance = _fetch_single_balance(bs_code, year, quarter)
-
-            # 现金流量表（现金流质量）
-            cashflow = _fetch_single_cashflow(bs_code, year, quarter)
-
-            # 解析数值
-            def _safe_float(v, default=None):
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_fetch_single_fundamental, _to_bs_code(s), year, quarter): s
+                for s in symbols
+            }
+            done_count = 0
+            for future in as_completed(futures):
+                done_count += 1
+                symbol = futures[future]
                 try:
-                    return float(v) if v and v != "" else default
-                except (ValueError, TypeError):
-                    return default
+                    data = future.result()
+                    if data:
+                        data["symbol"] = symbol
+                        results.append(data)
+                    else:
+                        fail_count += 1
+                        results.append({
+                            "symbol": symbol,
+                            "roe": None, "np_margin": None, "gp_margin": None,
+                            "net_profit": None, "eps_ttm": None, "revenue": None,
+                            "liability_ratio": None, "asset_to_equity": None,
+                            "cfo_to_np": None, "cfo_to_or": None,
+                            "has_data": False,
+                        })
+                except Exception:
+                    fail_count += 1
 
-            net_profit = _safe_float(profit.get("netProfit"))
-            roe = _safe_float(profit.get("roeAvg"))
-            np_margin = _safe_float(profit.get("npMargin"))
-            gp_margin = _safe_float(profit.get("gpMargin"))
-            eps_ttm = _safe_float(profit.get("epsTTM"))
-            revenue = _safe_float(profit.get("MBRevenue"))
-
-            liability_ratio = _safe_float(balance.get("liabilityToAsset"))
-            asset_to_equity = _safe_float(balance.get("assetToEquity"))
-
-            cfo_to_np = _safe_float(cashflow.get("CFOToNP"))
-            cfo_to_or = _safe_float(cashflow.get("CFOToOR"))
-
-            results.append({
-                "symbol": symbol,
-                "roe": roe,
-                "np_margin": np_margin,
-                "gp_margin": gp_margin,
-                "net_profit": net_profit,
-                "eps_ttm": eps_ttm,
-                "revenue": revenue,
-                "liability_ratio": liability_ratio,
-                "asset_to_equity": asset_to_equity,
-                "cfo_to_np": cfo_to_np,
-                "cfo_to_or": cfo_to_or,
-                "has_data": True,
-            })
-
-            if (i + 1) % 50 == 0 or (i + 1) == total:
-                pct = (i + 1) / total * 100
-                print(f"  [进度] {i+1}/{total} ({pct:.0f}%) | 失败: {fail_count}")
-                if progress_callback:
-                    progress_callback(i + 1, total)
-
+                if done_count % 50 == 0 or done_count == total:
+                    pct = done_count / total * 100
+                    print(f"  [进度] {done_count}/{total} ({pct:.0f}%) | 失败: {fail_count}")
+                    if progress_callback:
+                        progress_callback(done_count, total)
     finally:
         bs.logout()
 
