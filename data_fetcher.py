@@ -9,7 +9,7 @@ import akshare as ak
 import baostock as bs
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import CSI500_INDEX_CODE, DATA_DIR
+from config import CSI500_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE
 
 
 # ========== 成分股获取（akshare） ==========
@@ -89,20 +89,39 @@ def _fetch_single_bs_klines(
 
 def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2, max_workers: int = 10) -> pd.DataFrame:
     """
-    批量获取个股日线行情（baostock，含PE/PB）
-    使用 ThreadPoolExecutor 并行拉取
+    WARNING: 批量获取个股日线行情（baostock，含PE/PB）
+    - 有缓存 → 增量拉取（只补最新数据）
+    - 无缓存 → 全量拉取 years 年
     """
     if end_date is None:
         end_date = datetime.now().strftime("%Y%m%d")
 
-    start_date = (datetime.strptime(end_date, "%Y%m%d") -
-                  timedelta(days=years * 365 + 50)).strftime("%Y%m%d")
+    # 尝试加载缓存
+    cached_df = None
+    if KLINE_CACHE_FILE.exists():
+        print(f"[数据获取] 发现缓存文件，尝试增量更新...")
+        try:
+            cached_df = pd.read_parquet(KLINE_CACHE_FILE)
+            print(f"  [OK] 缓存包含 {cached_df['symbol'].nunique()} 只股票, {len(cached_df)} 条记录")
+        except Exception as e:
+            print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
+            cached_df = None
 
-    # baostock 日期格式 yyyy-mm-dd
-    start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
-    end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
-
-    print(f"[数据获取] 正在拉取 {len(symbols)} 只股票的日线行情（baostock, 并发{max_workers}线程）...")
+    if cached_df is not None and not cached_df.empty:
+        # 增量模式：只拉缓存中最新日期之后的数据
+        max_cached_date = cached_df["date"].max()
+        start = (max_cached_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+        print(f"  [增量] 缓存截止 {max_cached_date.strftime('%Y-%m-%d')}，只拉 {start} 之后的数据")
+        is_incremental = True
+    else:
+        # 全量模式
+        start_date = (datetime.strptime(end_date, "%Y%m%d") -
+                      timedelta(days=years * 365 + 50)).strftime("%Y%m%d")
+        start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
+        end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+        print(f"[数据获取] 全量拉取 {len(symbols)} 只股票（{start} ~ {end}）...")
+        is_incremental = False
 
     lg = bs.login()
     if lg.error_code != "0":
@@ -137,11 +156,33 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2,
     finally:
         bs.logout()
 
-    if not all_dfs:
+    if not all_dfs and cached_df is None:
         raise ValueError("未获取到任何股票数据")
 
-    result = pd.concat(all_dfs, ignore_index=True)
-    print(f"  [OK] 成功获取 {result['symbol'].nunique()} 只股票，{fail_count} 只失败")
+    # 合并新旧数据
+    if is_incremental and cached_df is not None:
+        new_df = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
+        if not new_df.empty:
+            # 去重：按 symbol + date 去重，保留新的
+            combined = pd.concat([cached_df, new_df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["symbol", "date"], keep="last")
+            combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
+            result = combined
+            print(f"  [OK] 增量更新完成: 新增 {len(new_df)} 条，总计 {len(result)} 条")
+        else:
+            result = cached_df
+            print(f"  [OK] 无新数据，使用缓存（{len(result)} 条）")
+    else:
+        result = pd.concat(all_dfs, ignore_index=True)
+        print(f"  [OK] 全量拉取完成: {result['symbol'].nunique()} 只股票, {len(result)} 条记录")
+
+    # 保存缓存
+    try:
+        result.to_parquet(KLINE_CACHE_FILE, index=False)
+        print(f"  [缓存] 已保存 {len(result)} 条到 {KLINE_CACHE_FILE.name}")
+    except Exception as e:
+        print(f"  [WARN] 缓存保存失败: {e}")
+
     return result
 
 

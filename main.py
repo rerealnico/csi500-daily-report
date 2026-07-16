@@ -65,7 +65,7 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
     # ===== Step 2: 获取行情数据 =====
     print(f"\n[Step 2/7] 获取日线行情数据")
     trade_date = fetch_latest_trade_date()
-    klines = fetch_daily_klines(symbols, end_date=trade_date, years=5)
+    klines = fetch_daily_klines(symbols, end_date=trade_date, years=10)
 
     # ===== Step 3: 获取基本面数据 =====
     print(f"\n[Step 3/7] 获取财务数据")

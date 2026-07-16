@@ -8,6 +8,10 @@ PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+# 数据缓存
+KLINE_CACHE_FILE = DATA_DIR / "klines.parquet"
+FUNDA_CACHE_FILE = DATA_DIR / "fundamentals.parquet"
+
 # 中证500 指数代码
 CSI500_INDEX_CODE = "000905"
 
