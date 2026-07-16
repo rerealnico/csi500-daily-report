@@ -29,8 +29,7 @@ jobs:
       - name: 安装中文字体
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq fonts-wqy-zenhei
-          # 清除 matplotlib 字体缓存
+          sudo apt-get install -y -qq fonts-wqy-zenhei 2>/dev/null
           python -c "import matplotlib; import shutil; shutil.rmtree(matplotlib.get_cachedir(), ignore_errors=True)"
 
       - name: 安装 Python 依赖
