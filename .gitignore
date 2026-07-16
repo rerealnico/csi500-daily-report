@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+reports/
+data/
+config/notifier_config.json
+*.zip
+.DS_Store

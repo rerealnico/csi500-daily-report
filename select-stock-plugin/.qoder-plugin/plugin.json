@@ -1,0 +1,17 @@
+{
+  "name": "select-stock",
+  "displayName": "华泰-条件选股",
+  "version": "1.0.0",
+  "description": "Filter financial instruments (stocks, ETFs, funds) by natural language conditions",
+  "descriptionZh": "通过自然语言筛选符合条件的股票/ETF/基金等金融标的，支持行业、财务、技术、行情、业绩、组合及主观推荐等多种筛选维度",
+  "author": {
+    "name": "Huatai Securities"
+  },
+  "homepage": "https://qoder.cn/marketplace/skill?id=select-stock",
+  "repository": "https://qoder-cn-mind.oss-accelerate.aliyuncs.com/skills/public/select-stock/latest/select-stock.zip",
+  "keywords": ["qoder-plugin", "skill", "stock", "finance", "selection"],
+  "category": "data-ai",
+  "tags": ["skill", "stock-selection", "financial-analysis"],
+  "skills": "./skills/",
+  "logo": "./assets/avatar.svg"
+}
