@@ -110,11 +110,12 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
     if not cloud_mode:
         save_report(report_text)
 
-        # 提取股价历史数据（用于 HTML 走势图）
+        # 提取股价历史数据（用于 HTML 走势图）- 仅保留展示用股票
         print(f"  [Step 6] 提取股价历史数据")
         price_history = {}
         if klines is not None and not klines.empty:
-            for symbol in symbols:
+            target_symbols = set(s['symbol'] for s in top_stocks + bottom_stocks)
+            for symbol in target_symbols:
                 stock_klines = klines[klines['symbol'] == symbol].sort_values('date')
                 if len(stock_klines) > 0:
                     step = max(1, len(stock_klines) // 200)
