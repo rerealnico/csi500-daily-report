@@ -13,6 +13,7 @@ import traceback
 from datetime import datetime
 
 from config import REPORT_CONFIG
+from config import FUNDAMENTAL_CONFIG
 from data_fetcher import (
     fetch_csi500_constituents,
     fetch_daily_klines,
@@ -24,7 +25,6 @@ from fundamental_analyzer import fetch_fundamentals, calculate_fundamental_score
 from capital_flow_analyzer import calculate_capital_flow_scores
 from scorer import calculate_final_scores, print_top_bottom
 from reporter import generate_report, save_report
-from visualizer import generate_all_charts
 from report_html import generate_html_report
 
 
@@ -69,7 +69,7 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
 
     # ===== Step 3: 获取基本面数据 =====
     print(f"\n[Step 3/7] 获取财务数据")
-    fundamentals = fetch_fundamentals(symbols, year=2025, quarter=4)
+    fundamentals = fetch_fundamentals(symbols, year=FUNDAMENTAL_CONFIG["year"], quarter=FUNDAMENTAL_CONFIG["quarter"])
     fundamental_scores = calculate_fundamental_scores(fundamentals)
 
     # ===== Step 4: 分析计算 =====
@@ -110,17 +110,28 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
     if not cloud_mode:
         save_report(report_text)
 
-        # 生成可视化图表
-        print(f"\n[Step 6/7] 生成可视化图表")
-        chart_files = generate_all_charts(final_scores, klines)
-        
+        # 提取股价历史数据（用于 HTML 走势图）
+        print(f"  [Step 6] 提取股价历史数据")
+        price_history = {}
+        if klines is not None and not klines.empty:
+            for symbol in symbols:
+                stock_klines = klines[klines['symbol'] == symbol].sort_values('date')
+                if len(stock_klines) > 0:
+                    step = max(1, len(stock_klines) // 200)
+                    sampled = stock_klines.iloc[::step]
+                    price_history[symbol] = [
+                        {"date": row['date'].strftime('%Y-%m-%d'), "close": round(float(row['close']), 2)}
+                        for _, row in sampled.iterrows()
+                    ]
+            print(f"    [OK] 已提取 {len(price_history)} 只股票的历史数据")
+
         # 生成 HTML 报告（用于 GitHub Pages）
         html_path = generate_html_report(
             report_text=report_text,
             top_stocks=top_stocks,
-            chart_files=chart_files,
             report_date=trade_date,
             all_stocks=final_scores.to_dict("records"),
+            price_history=price_history,
         )
         
         # HTML 报告已包含 base64 内嵌图表，可直接用于 GitHub Pages

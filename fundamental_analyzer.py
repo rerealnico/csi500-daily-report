@@ -19,7 +19,7 @@ _STOCK_TIMEOUT = 30
 
 # ========== 财务数据获取 ==========
 
-def _fetch_single_profit(code: str, year: int = 2025, quarter: int = 4) -> dict:
+def _fetch_single_profit(code: str, year: int, quarter: int) -> dict:
     """获取单只股票的利润表数据（ROE、净利润、EPS等）"""
     rs = bs.query_profit_data(code, year=year, quarter=quarter)
     while rs.next():
@@ -27,7 +27,7 @@ def _fetch_single_profit(code: str, year: int = 2025, quarter: int = 4) -> dict:
     return {}
 
 
-def _fetch_single_balance(code: str, year: int = 2025, quarter: int = 4) -> dict:
+def _fetch_single_balance(code: str, year: int, quarter: int) -> dict:
     """获取单只股票的资产负债表数据（负债率等）"""
     rs = bs.query_balance_data(code, year=year, quarter=quarter)
     while rs.next():
@@ -35,7 +35,7 @@ def _fetch_single_balance(code: str, year: int = 2025, quarter: int = 4) -> dict
     return {}
 
 
-def _fetch_single_cashflow(code: str, year: int = 2025, quarter: int = 4) -> dict:
+def _fetch_single_cashflow(code: str, year: int, quarter: int) -> dict:
     """获取单只股票的现金流量表数据"""
     rs = bs.query_cash_flow_data(code, year=year, quarter=quarter)
     while rs.next():
@@ -51,7 +51,7 @@ def _to_bs_code(code: str) -> str:
 
 
 
-def _fetch_single_fundamental(code: str, year: int = 2025, quarter: int = 4) -> dict:
+def _fetch_single_fundamental(code: str, year: int, quarter: int) -> dict:
     """获取单只股票的基本面数据（独立login/query/logout）"""
     lg = bs.login()
     if lg.error_code != "0":
@@ -89,8 +89,8 @@ def _fetch_single_fundamental(code: str, year: int = 2025, quarter: int = 4) -> 
 
 def fetch_fundamentals(
     symbols: list[str],
-    year: int = 2025,
-    quarter: int = 4,
+    year: int = None,
+    quarter: int = None,
     progress_callback=None,
 ) -> pd.DataFrame:
     """
@@ -109,6 +109,12 @@ def fetch_fundamentals(
         包含每只股票的基本面数据
     """
     print(f"\n[基本面] 正在获取 {len(symbols)} 只股票的财务数据...")
+
+    # 默认使用配置文件中的最新财报期
+    if year is None:
+        year = FUNDAMENTAL_CONFIG["year"]
+    if quarter is None:
+        quarter = FUNDAMENTAL_CONFIG["quarter"]
 
     # 尝试加载缓存
     cached_df = None

@@ -8,3 +8,7 @@ data/
 config/notifier_config.json
 *.zip
 .DS_Store
+_bak/
+check_*.py
+_check_*.py
+*.bak

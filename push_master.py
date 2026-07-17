@@ -5,11 +5,13 @@ import os
 from datetime import datetime
 import time
 
-TOKEN = "TOKEN_REMOVED"
+TOKEN = os.environ.get("GITHUB_TOKEN", "")
+if not TOKEN:
+    raise ValueError("环境变量 GITHUB_TOKEN 未设置，请先 set GITHUB_TOKEN=your_token")
 OWNER = "rerealnico"
 REPO = "csi500-daily-report"
 BRANCH = "master"
-REPO_DIR = r"d:\qoder workplace\test 1"
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
 
@@ -104,7 +106,7 @@ print(f"  新树: {tree_sha[:8]}")
 print("[4/5] 创建提交...")
 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 commit_payload = {
-    "message": f"feat: 报告页面嵌入条件选股功能(客户端筛选)\n\n自动部署 {date_str}",
+    "message": f"优化: 图表base64改URL引用，条件选股移到图表前，新增显示全部按钮\n\n自动部署 {date_str}",
     "tree": tree_sha,
     "parents": [parent_sha],
 }

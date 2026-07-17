@@ -2,6 +2,7 @@
 配置文件 - 中证500每日复盘分析系统
 """
 from pathlib import Path
+from datetime import datetime
 
 # 项目路径
 PROJECT_ROOT = Path(__file__).parent
@@ -45,10 +46,25 @@ SCORE_WEIGHTS = {
     "capital_flow": 0.10,
 }
 
+def get_latest_financial_period() -> tuple:
+    """动态推断最新可用的财报年份和季度（留出财报发布时间缓冲）"""
+    now = datetime.now()
+    m = now.month
+    if m <= 4:      # Jan-Apr: 前一年年报（年报截止4月底发布）
+        return now.year - 1, 4
+    elif m <= 7:    # May-Jul: 当年一季报（截止4月底）
+        return now.year, 1
+    elif m <= 10:   # Aug-Oct: 当年中报（截止8月底）
+        return now.year, 2
+    else:           # Nov-Dec: 当年三季报（截止10月底）
+        return now.year, 3
+
+
 # 基本面分析参数
+_year, _quarter = get_latest_financial_period()
 FUNDAMENTAL_CONFIG = {
-    "year": 2025,
-    "quarter": 4,  # 4 = 年报
+    "year": _year,
+    "quarter": _quarter,
     "scoring": {
         "roe_weight": 0.35,
         "margin_weight": 0.25,

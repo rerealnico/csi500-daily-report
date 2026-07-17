@@ -246,11 +246,14 @@ def fetch_financial_indicators(symbols: list[str]) -> pd.DataFrame:
 def fetch_latest_trade_date() -> str:
     """获取最近交易日"""
     today = datetime.now()
-    if today.weekday() == 5:
-        delta = 1
-    elif today.weekday() == 6:
+    weekday = today.weekday()
+    if weekday == 0:  # 周一 → 上周五
+        delta = 3
+    elif weekday == 6:  # 周日 → 上周五
         delta = 2
-    else:
+    elif weekday == 5:  # 周六 → 周五
+        delta = 1
+    else:  # 周二~周五 → 前一天
         delta = 1
     last_date = today - timedelta(days=delta)
     return last_date.strftime("%Y%m%d")
