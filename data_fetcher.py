@@ -134,7 +134,7 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
         # 增量模式：只拉缓存中最新日期之后的数据
         max_cached_date = cached_df["date"].max()
         start = (max_cached_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+        end = datetime.now().strftime("%Y-%m-%d")
         print(f"  [增量] 缓存截止 {max_cached_date.strftime('%Y-%m-%d')}，只拉 {start} 之后的数据")
         is_incremental = True
     else:
