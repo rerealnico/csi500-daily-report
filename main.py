@@ -66,6 +66,9 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
     print(f"\n[Step 2/7] 获取日线行情数据")
     trade_date = fetch_latest_trade_date()
     klines = fetch_daily_klines(symbols, end_date=trade_date, years=10)
+    # 以实际数据最新日期作为报告日期
+    if klines is not None and not klines.empty:
+        trade_date = klines["date"].max().strftime("%Y%m%d")
 
     # ===== Step 3: 获取基本面数据 =====
     print(f"\n[Step 3/7] 获取财务数据")
