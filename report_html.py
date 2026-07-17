@@ -314,34 +314,6 @@ def generate_html_report(
         .chart-box h3 {{ font-size: 14px; color: #636e72; margin-bottom: 12px; }}
         .chart-box canvas {{ width: 100%; height: auto; }}
 
-        /* Score Bars */
-        .score-bars {{ padding: 8px 0; }}
-        .score-bar-row {{ display: flex; align-items: center; gap: 10px; margin: 6px 0; }}
-        .score-bar-label {{ width: 60px; font-size: 13px; color: #636e72; text-align: right; }}
-        .score-bar-track {{
-            flex: 1; height: 22px; background: #f0f2f5; border-radius: 11px;
-            overflow: hidden; position: relative;
-        }}
-        .score-bar-fill {{
-            height: 100%; border-radius: 11px;
-            transition: width 1s ease;
-            display: flex; align-items: center; justify-content: flex-end;
-            padding-right: 8px; font-size: 11px; color: white; font-weight: 600;
-            min-width: 30px;
-        }}
-        .score-bar-value {{ font-size: 13px; font-weight: 600; color: #2d3436; width: 36px; }}
-
-        /* Percentile Bars */
-        .pctile-row {{ display: flex; align-items: center; gap: 10px; margin: 5px 0; }}
-        .pctile-label {{ width: 60px; font-size: 12px; color: #636e72; text-align: right; }}
-        .pctile-track {{
-            flex: 1; height: 14px; background: #f0f2f5; border-radius: 7px; overflow: hidden;
-        }}
-        .pctile-fill {{
-            height: 100%; border-radius: 7px; transition: width 1s ease;
-        }}
-        .pctile-value {{ font-size: 12px; font-weight: 600; color: #2d3436; width: 42px; }}
-
         /* Footer */
         .footer {{
             text-align: center; padding: 20px; color: #b2bec3; font-size: 12px;
@@ -383,8 +355,6 @@ def generate_html_report(
             }}
             body.dark-mode .stock-card .card-name {{ color: #dfe6e9; }}
             body.dark-mode .chart-box {{ background: #3d3d56; }}
-            body.dark-mode .score-bar-track, body.dark-mode .pctile-track {{ background: #3d3d56; }}
-            body.dark-mode .score-bar-value, body.dark-mode .pctile-value {{ color: #dfe6e9; }}
             body.dark-mode .summary-card .label {{ color: #b2bec3; }}
             body.dark-mode .back-btn {{ background: #3d3d56; color: #b2bec3; border-color: #3d3d56; }}
             body.dark-mode .back-btn:hover {{ border-color: #667eea; }}
@@ -682,7 +652,7 @@ function drawRadar(stock) {{
     // Value label offset outward from point
     var off = 14;
     var lx = px + off*Math.cos(a), ly = py + off*Math.sin(a);
-    ctx.fillStyle = '#2d3436';
+    ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#dfe6e9' : '#2d3436';
     ctx.font = 'bold 11px sans-serif';
     ctx.fillText(Math.round(stock[FACTORS[i]]), lx, ly);
   }}
@@ -701,20 +671,8 @@ function drawPriceChart(symbol) {{
   }}
   var prices = data.map(function(d){{return d.close}});
   var mn = Math.min.apply(null, prices), mx = Math.max.apply(null, prices), rg = mx-mn || 1;
-  // Key price levels
-  var mid = (mn+mx)/2;
-  // Draw horizontal grid lines with price labels
+  // Draw Y-axis grid + price labels
   ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  var levels = [mn, mid, mx];
-  for (var li = 0; li < levels.length; li++) {{
-    var lv = levels[li];
-    if (lv === mn || lv === mx || Math.abs(lv-mid) < rg*0.05) continue;
-    var y = pt + ch*(1-(lv-mn)/rg);
-    ctx.beginPath(); ctx.setLineDash([4,4]); ctx.moveTo(pl,y); ctx.lineTo(W-pr,y);
-    ctx.strokeStyle = '#dfe6e9'; ctx.lineWidth = 0.5; ctx.stroke();
-    ctx.setLineDash([]);
-  }}
-  // Y-axis price labels
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.font = '10px sans-serif';
   for (var i = 0; i <= 4; i++) {{
     var y = pt + ch*i/4;
@@ -740,15 +698,15 @@ function drawPriceChart(symbol) {{
     if (prices[i] > prices[maxIdx]) maxIdx = i;
     if (prices[i] < prices[minIdx]) minIdx = i;
   }}
-  function annotatePoint(idx, color, label) {{
+  var annotatePoint = function(idx, color, label, arrow) {{
     var x = pl + cw*idx/(data.length-1), y = pt + ch*(1-(prices[idx]-mn)/rg);
     ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI*2);
     ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
     ctx.fillStyle = color; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(label + ' ' + prices[idx].toFixed(1) + '↗', x, y-12);
+    ctx.fillText(label + ' ' + prices[idx].toFixed(1) + arrow, x, y-12);
   }}
-  annotatePoint(maxIdx, '#d63031', '高');
-  annotatePoint(minIdx, '#00b894', '低');
+  annotatePoint(maxIdx, '#d63031', '高', '↗');
+  annotatePoint(minIdx, '#00b894', '低', '↘');
   // X-axis date labels (show ~5 evenly spaced dates)
   ctx.fillStyle = '#b2bec3'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   var steps = Math.min(5, data.length);
