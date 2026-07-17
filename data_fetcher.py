@@ -124,8 +124,11 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
         requested_symbols = set(symbols)
         if not requested_symbols.issubset(cached_symbols):
             missing = len(requested_symbols - cached_symbols)
-            print(f"  [缓存] 缓存缺 {missing} 只股票，自动切换全量模式")
-            cached_df = None  # 回退全量（让下面的else处理）
+            print(f"  [缓存] 缓存缺 {missing} 只股票，使用缓存数据（跳过缺失股票）")
+            # 不再全量刷新，直接用缓存数据
+            symbols = sorted(cached_symbols & requested_symbols)
+            if not symbols:
+                cached_df = None
 
     if cached_df is not None and not cached_df.empty:
         # 增量模式：只拉缓存中最新日期之后的数据
@@ -197,6 +200,11 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
 
     if not all_dfs and cached_df is None:
         raise ValueError("未获取到任何股票数据")
+    elif not all_dfs and cached_df is not None:
+        # 全量拉取全部失败但缓存可用，直接使用缓存
+        print(f"  [缓存] 拉取失败，回退使用缓存数据")
+        result = cached_df
+        is_incremental = True
 
     # 合并新旧数据
     if is_incremental and cached_df is not None:
