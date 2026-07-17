@@ -55,7 +55,7 @@ jobs:
       - name: ☁️ 部署到 Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: 618b73302e465665945185f434391fdc
+          CLOUDFLARE_ACCOUNT_ID: fc46484d6c7690f821d9c637b610d465
         run: |
           npx wrangler pages deploy reports/ \
             --project-name csi500-daily-report \
