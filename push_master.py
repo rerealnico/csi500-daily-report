@@ -44,6 +44,16 @@ files = [
     "scf_handler.py", "notifier.py", "deploy_scf.py",
     "config/notifier_config.json", "requirements.txt", "deploy.ps1",
     "image_host.py",
+    "htsc-skills/select-stock/select_stock.py",
+    "htsc-skills/select-stock/SKILL.md",
+    "htsc-skills/financial-analysis/financial_analysis.py",
+    "htsc-skills/financial-analysis/SKILL.md",
+    "htsc-skills/query-indicator/query_indicator.py",
+    "htsc-skills/query-indicator/SKILL.md",
+    "htsc-skills/a-share-paper-trading/a_share_paper_trading.py",
+    "htsc-skills/a-share-paper-trading/SKILL.md",
+    "htsc-skills/watchlist-management/watchlist_management.py",
+    "htsc-skills/watchlist-management/SKILL.md",
 ]
 
 # 1. 获取当前 master 的引用和树
@@ -94,7 +104,7 @@ print(f"  新树: {tree_sha[:8]}")
 print("[4/5] 创建提交...")
 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 commit_payload = {
-    "message": f"feat: ProcessPoolExecutor多进程并行 + 10年数据 + HTML报告内嵌图表\n\n自动部署 {date_str}",
+    "message": f"feat: 报告页面嵌入条件选股功能(客户端筛选)\n\n自动部署 {date_str}",
     "tree": tree_sha,
     "parents": [parent_sha],
 }
