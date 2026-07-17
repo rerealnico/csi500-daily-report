@@ -3,6 +3,8 @@ HTML 报告生成模块
 生成美观的 HTML 页面，内嵌图表，发布到 GitHub Pages
 """
 import base64
+import json
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from config import REPORT_CONFIG
@@ -56,6 +58,7 @@ def generate_html_report(
     chart_files: list[str] = None,
     report_date: str = None,
     output_path: str = None,
+    all_stocks: list = None,
 ) -> str:
     """
     生成 HTML 报告页面
@@ -121,6 +124,32 @@ def generate_html_report(
             <td class="roe">{roe_str}</td>
             <td><span class="tag tag-{action}">{action}</span></td>
         </tr>"""
+
+    # 全量股票数据 JSON（用于客户端筛选选股）
+    all_stocks_json = "[]"
+    if all_stocks:
+        try:
+            # 清理 NaN/Infinity 等 JSON 不支持的数值
+            clean = []
+            for s in all_stocks:
+                item = {}
+                for k, v in s.items():
+                    if k in ('symbol', 'stock_name', 'action', 'is_loss'):
+                        item[k] = str(v) if not pd.isna(v) else ''
+                    elif k == 'roe':
+                        try:
+                            item[k] = round(float(v), 4) if v is not None and not pd.isna(v) else None
+                        except (ValueError, TypeError):
+                            item[k] = None
+                    else:
+                        try:
+                            item[k] = round(float(v), 1) if v is not None and not pd.isna(v) else None
+                        except (ValueError, TypeError):
+                            item[k] = None
+                clean.append(item)
+            all_stocks_json = json.dumps(clean, ensure_ascii=False)
+        except Exception as e:
+            print(f"  [WARN] 全量股票序列化失败: {e}")
 
     # 图表区 HTML
     charts_html = ""
@@ -268,6 +297,50 @@ def generate_html_report(
         }}
 
         /* Footer */
+        /* Stock Screener */
+        .screener-section {{ margin-bottom: 24px; }}
+        .screener-toolbar {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }}
+        .screener-toolbar input, .screener-toolbar select {{
+            padding: 8px 12px; border: 1px solid #e9ecef; border-radius: 8px;
+            font-size: 13px; background: white; color: #2d3436;
+            transition: border-color 0.2s;
+        }}
+        .screener-toolbar input:focus, .screener-toolbar select:focus {{
+            outline: none; border-color: #667eea;
+        }}
+        .screener-toolbar input[type="text"] {{ flex: 1; min-width: 180px; }}
+        .screener-toolbar input[type="number"] {{ width: 80px; }}
+        .screener-toolbar label {{ font-size: 12px; color: #636e72; display: flex; align-items: center; gap: 4px; }}
+        .screener-count {{ font-size: 13px; color: #636e72; margin-bottom: 12px; }}
+        .screener-count strong {{ color: #667eea; }}
+        .screener-table-wrap {{ max-height: 500px; overflow-y: auto; border: 1px solid #e9ecef; border-radius: 8px; }}
+        .screener-table-wrap table {{ font-size: 13px; }}
+        .screener-table-wrap th {{ position: sticky; top: 0; z-index: 1; }}
+        .dark-mode .screener-toolbar input, .dark-mode .screener-toolbar select {{
+            background: #3d3d56; color: #dfe6e9; border-color: #3d3d56;
+        }}
+        .dark-mode .screener-table-wrap {{ border-color: #3d3d56; }}
+        .screener-quick {{
+            display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+        }}
+        .screener-quick button {{
+            padding: 4px 12px; border: 1px solid #e9ecef; border-radius: 20px;
+            background: white; color: #636e72; font-size: 12px; cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .screener-quick button:hover {{
+            background: #667eea; color: white; border-color: #667eea;
+        }}
+        .screener-quick button.active {{
+            background: #667eea; color: white; border-color: #667eea;
+        }}
+        .dark-mode .screener-quick button {{
+            background: #3d3d56; color: #b2bec3; border-color: #3d3d56;
+        }}
+        .dark-mode .screener-quick button:hover {{
+            background: #667eea; color: white;
+        }}
+
         .footer {{
             text-align: center; padding: 20px; color: #b2bec3; font-size: 12px;
         }}
@@ -374,6 +447,50 @@ def generate_html_report(
         <!-- Charts -->
         {charts_html}
 
+        <!-- Stock Screener -->
+        <div class="section screener-section">
+            <h2>🔍 条件选股</h2>
+            <div class="screener-toolbar">
+                <input type="text" id="screener-search" placeholder="搜索股票名称或代码..." oninput="filterStocks()">
+                <label>总分 <input type="number" id="screener-min" placeholder="最低" oninput="filterStocks()"></label>
+                <label>~ <input type="number" id="screener-max" placeholder="最高" oninput="filterStocks()"></label>
+                <select id="screener-action" onchange="filterStocks()">
+                    <option value="">全部建议</option>
+                    <option value="推荐关注">推荐关注</option>
+                    <option value="可以关注">可以关注</option>
+                    <option value="持有观望">持有观望</option>
+                    <option value="谨慎观察">谨慎观察</option>
+                    <option value="注意风险">注意风险</option>
+                    <option value="亏损暂避">亏损暂避</option>
+                </select>
+            </div>
+            <div class="screener-quick">
+                <button onclick="quickFilter('top20')">Top 20</button>
+                <button onclick="quickFilter('推荐关注')">推荐关注</button>
+                <button onclick="quickFilter('注意风险')">注意风险</button>
+                <button onclick="quickFilter('clear')">清除筛选</button>
+            </div>
+            <div class="screener-count" id="screener-count">共 <strong>0</strong> 只</div>
+            <div class="screener-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th onclick="sortScreener(0)">#</th>
+                            <th onclick="sortScreener(1)">股票</th>
+                            <th onclick="sortScreener(2)">总分</th>
+                            <th onclick="sortScreener(3)">估值</th>
+                            <th onclick="sortScreener(4)">基本面</th>
+                            <th onclick="sortScreener(5)">量能</th>
+                            <th onclick="sortScreener(6)">动量</th>
+                            <th onclick="sortScreener(7)">ROE</th>
+                            <th onclick="sortScreener(8)">建议</th>
+                        </tr>
+                    </thead>
+                    <tbody id="screener-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Full Report Text -->
         <div class="section">
             <h2>📝 完整报告</h2>
@@ -394,6 +511,9 @@ def generate_html_report(
     <div class="lightbox" id="lightbox" onclick="this.style.display='none'">
         <img id="lightbox-img" src="" alt="放大查看">
     </div>
+
+    <!-- 全量股票数据（条件选股用） -->
+    <script id="stock-data" type="application/json">{all_stocks_json}</script>
 
     <script>
     // 暗色模式切换
@@ -449,6 +569,109 @@ def generate_html_report(
             }});
         }});
     }});
+        
+    // ========== 条件选股 (Stock Screener) ==========
+    var screenerData = [];
+    var screenerSortKey = 2;
+    var screenerSortDesc = true;
+        
+    try {{
+        var el = document.getElementById('stock-data');
+        if (el) screenerData = JSON.parse(el.textContent);
+    }} catch(e) {{ console.warn('Stock data parse error:', e); }}
+        
+    function filterStocks() {{
+        var q = (document.getElementById('screener-search').value || '').toLowerCase();
+        var min = parseFloat(document.getElementById('screener-min').value) || 0;
+        var max = parseFloat(document.getElementById('screener-max').value) || 100;
+        var act = document.getElementById('screener-action').value;
+    
+        var filtered = screenerData.filter(function(s) {{
+            if (q && s.stock_name.toLowerCase().indexOf(q) === -1 && s.symbol.indexOf(q) === -1) return false;
+            if (s.total_score !== null && (s.total_score < min || s.total_score > max)) return false;
+            if (act && s.action !== act) return false;
+            return true;
+        }});
+    
+        // 排序
+        var keys = [null, 'stock_name', 'total_score', 'valuation_score', 'fundamental_score', 'volume_score', 'momentum_score', 'roe', 'action'];
+        var key = keys[screenerSortKey] || 'total_score';
+        filtered.sort(function(a, b) {{
+            var av = a[key], bv = b[key];
+            if (av === null || av === undefined) av = screenerSortDesc ? -999999 : 999999;
+            if (bv === null || bv === undefined) bv = screenerSortDesc ? -999999 : 999999;
+            if (typeof av === 'string') {{
+                return screenerSortDesc ? bv.localeCompare(av) : av.localeCompare(bv);
+            }}
+            return screenerSortDesc ? bv - av : av - bv;
+        }});
+    
+        renderScreener(filtered);
+    }}
+    
+    function renderScreener(data) {{
+        var tbody = document.getElementById('screener-tbody');
+        document.getElementById('screener-count').innerHTML = '共 <strong>' + data.length + '</strong> 只';
+        if (data.length === 0) {{
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#b2bec3;padding:32px">没有符合筛选条件的股票</td></tr>';
+            return;
+        }}
+        var h = '';
+        for (var i = 0; i < data.length; i++) {{
+            var s = data[i];
+            var roeStr = '';
+            if (s.roe !== null && s.roe !== undefined) {{
+                roeStr = (s.roe * 100).toFixed(1) + '%';
+            }}
+            h += '<tr>' +
+                '<td class="rank">' + (i + 1) + '</td>' +
+                '<td class="name"><strong>' + s.stock_name + '</strong><span class="code">' + s.symbol + '</span></td>' +
+                '<td><span class="score-main">' + (s.total_score !== null ? s.total_score.toFixed(1) : '-') + '</span></td>' +
+                '<td>' + (s.valuation_score !== null ? s.valuation_score.toFixed(0) : '-') + '</td>' +
+                '<td>' + (s.fundamental_score !== null ? s.fundamental_score.toFixed(0) : '-') + '</td>' +
+                '<td>' + (s.volume_score !== null ? s.volume_score.toFixed(0) : '-') + '</td>' +
+                '<td>' + (s.momentum_score !== null ? s.momentum_score.toFixed(0) : '-') + '</td>' +
+                '<td class="roe">' + roeStr + '</td>' +
+                '<td><span class="tag tag-' + s.action + '">' + s.action + '</span></td>' +
+                '</tr>';
+        }}
+        tbody.innerHTML = h;
+    }}
+    
+    function quickFilter(type) {{
+        if (type === 'clear') {{
+            document.getElementById('screener-search').value = '';
+            document.getElementById('screener-min').value = '';
+            document.getElementById('screener-max').value = '';
+            document.getElementById('screener-action').value = '';
+            filterStocks();
+            return;
+        }}
+        if (type === 'top20') {{
+            document.getElementById('screener-search').value = '';
+            document.getElementById('screener-min').value = '';
+            document.getElementById('screener-max').value = '';
+            document.getElementById('screener-action').value = '';
+            var sorted = [].concat(screenerData).sort(function(a,b){{return b.total_score - a.total_score}}).slice(0, 20);
+            renderScreener(sorted);
+            return;
+        }}
+        document.getElementById('screener-action').value = type;
+        document.getElementById('screener-search').value = '';
+        filterStocks();
+    }}
+    
+    function sortScreener(col) {{
+        if (col === screenerSortKey) screenerSortDesc = !screenerSortDesc;
+        else {{ screenerSortKey = col; screenerSortDesc = true; }}
+        filterStocks();
+    }}
+    
+    // 初始渲染
+    if (screenerData.length > 0) {{
+        var top20 = [].concat(screenerData).sort(function(a,b){{return b.total_score - a.total_score}}).slice(0, 20);
+        renderScreener(top20);
+    }}
     </script>
 </body>
 </html>"""

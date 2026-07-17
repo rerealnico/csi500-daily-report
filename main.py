@@ -120,6 +120,7 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
             top_stocks=top_stocks,
             chart_files=chart_files,
             report_date=trade_date,
+            all_stocks=final_scores.to_dict("records"),
         )
         
         # HTML 报告已包含 base64 内嵌图表，可直接用于 GitHub Pages
