@@ -2,7 +2,6 @@
 HTML 报告生成模块
 生成美观的 HTML 页面，内嵌图表，发布到 GitHub Pages
 """
-import base64
 import json
 import pandas as pd
 from pathlib import Path
@@ -10,15 +9,6 @@ from datetime import datetime
 from config import REPORT_CONFIG
 
 
-def _img_to_b64(filepath: str) -> str:
-    """图片转 base64 内嵌"""
-    path = Path(filepath)
-    if not path.exists():
-        return None
-    suffix = path.suffix.lower()
-    mime = "png" if suffix == ".png" else "jpeg"
-    data = base64.b64encode(path.read_bytes()).decode()
-    return f"data:image/{mime};base64,{data}"
 
 
 def _classify_board(symbol: str) -> str:
@@ -80,13 +70,8 @@ def generate_html_report(
     if report_date is None:
         report_date = datetime.now().strftime("%Y-%m-%d")
 
-    # 图表转 base64
-    chart_images = []
-    if chart_files:
-        for fp in chart_files:
-            b64 = _img_to_b64(fp)
-            if b64:
-                chart_images.append(b64)
+    # 使用图表文件名作为 URL 引用（PNG 由 actions 部署到 gh-pages）
+    chart_images = [Path(fp).name for fp in (chart_files or [])]
 
     # 解析报告文本
     lines = report_text.strip().split("\n")
@@ -444,9 +429,6 @@ def generate_html_report(
             </div>
         </div>
 
-        <!-- Charts -->
-        {charts_html}
-
         <!-- Stock Screener -->
         <div class="section screener-section">
             <h2>🔍 条件选股</h2>
@@ -469,6 +451,7 @@ def generate_html_report(
                 <button onclick="quickFilter('推荐关注')">推荐关注</button>
                 <button onclick="quickFilter('注意风险')">注意风险</button>
                 <button onclick="quickFilter('clear')">清除筛选</button>
+                <button onclick="quickFilter('all')">显示全部</button>
             </div>
             <div class="screener-count" id="screener-count">共 <strong>0</strong> 只</div>
             <div class="screener-table-wrap">
@@ -490,6 +473,8 @@ def generate_html_report(
                 </table>
             </div>
         </div>
+
+        {charts_html}
 
         <!-- Full Report Text -->
         <div class="section">
@@ -640,6 +625,14 @@ def generate_html_report(
     
     function quickFilter(type) {{
         if (type === 'clear') {{
+            document.getElementById('screener-search').value = '';
+            document.getElementById('screener-min').value = '';
+            document.getElementById('screener-max').value = '';
+            document.getElementById('screener-action').value = '';
+            filterStocks();
+            return;
+        }}
+        if (type === 'all') {{
             document.getElementById('screener-search').value = '';
             document.getElementById('screener-min').value = '';
             document.getElementById('screener-max').value = '';
