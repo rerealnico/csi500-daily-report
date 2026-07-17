@@ -3,6 +3,7 @@ import requests
 import base64
 import os
 from datetime import datetime
+import time
 
 TOKEN = "TOKEN_REMOVED"
 OWNER = "rerealnico"
@@ -13,6 +14,26 @@ REPO_DIR = r"d:\qoder workplace\test 1"
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
 
 def api_url(p): return f"https://api.github.com/repos/{OWNER}/{REPO}/{p}"
+
+def api_post(path, data, retries=5):
+    for i in range(retries):
+        resp = requests.post(api_url(path), headers=headers, json=data, timeout=60)
+        if resp.status_code in (200, 201):
+            return resp
+        wait = min(30 * (2 ** i), 240)
+        print(f"  POST {resp.status_code}, {wait}s后重试 ({i+1}/{retries})...")
+        time.sleep(wait)
+    return resp
+
+def api_patch(path, data, retries=5):
+    for i in range(retries):
+        resp = requests.patch(api_url(path), headers=headers, json=data, timeout=60)
+        if resp.status_code in (200, 201):
+            return resp
+        wait = min(30 * (2 ** i), 240)
+        print(f"  PATCH {resp.status_code}, {wait}s后重试 ({i+1}/{retries})...")
+        time.sleep(wait)
+    return resp
 
 # 要推送的文件
 files = [
@@ -27,9 +48,9 @@ files = [
 
 # 1. 获取当前 master 的引用和树
 print("[1/5] 获取 master 引用...")
-ref_resp = requests.get(api_url(f"git/refs/heads/{BRANCH}"), headers=headers)
+ref_resp = requests.get(api_url(f"git/refs/heads/{BRANCH}"), headers=headers, timeout=30)
 parent_sha = ref_resp.json()["object"]["sha"]
-commit_resp = requests.get(api_url(f"git/commits/{parent_sha}"), headers=headers)
+commit_resp = requests.get(api_url(f"git/commits/{parent_sha}"), headers=headers, timeout=30)
 base_tree_sha = commit_resp.json()["tree"]["sha"]
 print(f"  当前 master: {parent_sha[:8]}, 树: {base_tree_sha[:8]}")
 
@@ -39,7 +60,6 @@ tree_items = []
 for relpath in files:
     fullpath = os.path.join(REPO_DIR, relpath)
     if not os.path.exists(fullpath):
-        # 文件被删除，添加删除标记
         tree_items.append({"path": relpath, "mode": "100644", "type": "blob", "sha": None})
         print(f"  [删除] {relpath}")
         continue
@@ -53,17 +73,17 @@ for relpath in files:
     except UnicodeDecodeError:
         blob = {"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"}
     
-    resp = requests.post(api_url("git/blobs"), headers=headers, json=blob)
+    resp = api_post("git/blobs", blob)
     if resp.status_code not in (200, 201):
         print(f"  [失败] {relpath}: {resp.status_code}")
         continue
     tree_items.append({"path": relpath, "mode": "100644", "type": "blob", "sha": resp.json()["sha"]})
     print(f"  [OK] {relpath}")
 
-# 3. 创建新树（基于当前master树做增量）
+# 3. 创建新树
 print("[3/5] 创建树...")
 tree_payload = {"base_tree": base_tree_sha, "tree": tree_items}
-resp = requests.post(api_url("git/trees"), headers=headers, json=tree_payload)
+resp = api_post("git/trees", tree_payload)
 if resp.status_code not in (200, 201):
     print(f"  创建树失败: {resp.status_code} {resp.text[:200]}")
     exit(1)
@@ -78,7 +98,7 @@ commit_payload = {
     "tree": tree_sha,
     "parents": [parent_sha],
 }
-resp = requests.post(api_url("git/commits"), headers=headers, json=commit_payload)
+resp = api_post("git/commits", commit_payload)
 if resp.status_code not in (200, 201):
     print(f"  创建提交失败: {resp.status_code} {resp.text[:200]}")
     exit(1)
@@ -87,17 +107,16 @@ print(f"  提交: {commit_sha[:8]}")
 
 # 5. 更新 master 引用
 print("[5/5] 更新 master 引用...")
-resp = requests.patch(api_url(f"git/refs/heads/{BRANCH}"), headers=headers,
-                      json={"sha": commit_sha, "force": False})
+resp = api_patch(f"git/refs/heads/{BRANCH}", {"sha": commit_sha, "force": False})
 if resp.status_code in (200, 201):
-    print(f"  ✅ master 更新成功: {parent_sha[:8]} → {commit_sha[:8]}")
+    print(f"  [OK] master 更新成功: {parent_sha[:8]} -> {commit_sha[:8]}")
 else:
     print(f"  ❌ 更新失败: {resp.status_code} {resp.text[:200]}")
     exit(1)
 
 print()
 print("="*60)
-print("  ✅ 全部部署完成！")
+print("  [OK] 全部部署完成！")
 print(f"  master: 已推送最新代码 → GitHub Actions 将自动运行")
 print(f"  gh-pages: 报告已就绪")
 print(f"  报告地址: https://{OWNER}.github.io/{REPO}/report.html")
