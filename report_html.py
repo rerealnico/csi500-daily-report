@@ -13,16 +13,16 @@ from config import REPORT_CONFIG
 
 def _classify_board(symbol: str) -> str:
     """根据代码前缀判断板块：000=主板, 002=中小板, 300=创业板, 688=科创板, 其他=未知"""
-    if symbol.startswith("6"):
-        return "主板"
-    elif symbol.startswith("00"):
-        return "主板"
+    if symbol.startswith("688"):
+        return "科创板"
     elif symbol.startswith("002"):
         return "中小板"
     elif symbol.startswith("300"):
         return "创业板"
-    elif symbol.startswith("688"):
-        return "科创板"
+    elif symbol.startswith("6"):
+        return "主板"
+    elif symbol.startswith("00"):
+        return "主板"
     else:
         return "其他"
 
@@ -428,7 +428,7 @@ def generate_html_report(
         <div class="summary-card"><div class="num">{len(all_stocks)}</div><div class="label">覆盖股票</div></div>
         <div class="summary-card"><div class="num">{f"{top_stocks[0]['total_score']:.1f}" if top_stocks else '0'}</div><div class="label">最高评分</div></div>
         <div class="summary-card"><div class="num">{top_stocks[0].get('stock_name', '-') if top_stocks else '-'}</div><div class="label">冠军股票</div></div>
-        {_build_industry_distribution(top_stocks)}
+        {_build_industry_distribution(all_stocks or top_stocks)}
     </div>
 
     <!-- Search + Stock Cards -->
@@ -512,7 +512,7 @@ function renderCards(data) {{
     var s = data[i];
     var score = s.total_score !== null ? s.total_score.toFixed(1) : '-';
     var tag = s.action || '';
-    h += '<div class="stock-card" onclick="showDetail(\'' + s.symbol + '\')">' +
+    h += '<div class="stock-card" onclick="showDetail(&#39;' + s.symbol + '&#39;)">' +
       '<div class="card-header">' +
         '<div><span class="card-name">' + s.stock_name + '</span><span class="card-code">' + s.symbol + '</span></div>' +
         '<div class="card-score">' + score + '</div>' +
