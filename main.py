@@ -127,7 +127,6 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
 
         # 生成 HTML 报告（用于 GitHub Pages）
         html_path = generate_html_report(
-            report_text=report_text,
             top_stocks=top_stocks,
             report_date=trade_date,
             all_stocks=final_scores.to_dict("records"),

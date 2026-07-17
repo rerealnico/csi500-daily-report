@@ -43,30 +43,13 @@ def _build_industry_distribution(top_stocks: list) -> str:
 
 
 def generate_html_report(
-    report_text: str,
     top_stocks: list,
     report_date: str = None,
     output_path: str = None,
     all_stocks: list = None,
     price_history: dict = None,
 ) -> str:
-    """
-    生成 HTML 报告页面
-
-    Parameters
-    ----------
-    report_text : str
-        文本报告内容
-    chart_files : list[str]
-        图表文件路径列表
-    report_date : str
-        报告日期
-
-    Returns
-    -------
-    str
-        HTML 文件路径
-    """
+    """生成 HTML 报告页面"""
     if report_date is None:
         report_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -405,6 +388,12 @@ def generate_html_report(
             body.dark-mode .summary-card .label {{ color: #b2bec3; }}
             body.dark-mode .back-btn {{ background: #3d3d56; color: #b2bec3; border-color: #3d3d56; }}
             body.dark-mode .back-btn:hover {{ border-color: #667eea; }}
+            body.dark-mode .analysis-table .alabel {{ color: #dfe6e9; }}
+            body.dark-mode .analysis-table .avalue {{ color: #dfe6e9; }}
+            body.dark-mode .analysis-table .apctile {{ color: #b2bec3; }}
+            body.dark-mode .analysis-table .ainsight {{ color: #b2bec3; }}
+            body.dark-mode .analysis-table .abar-track {{ background: #3d3d56; }}
+            body.dark-mode .detail-sub {{ color: #b2bec3; border-bottom-color: #3d3d56; }}
         }}
 
         /* Explicit dark mode */
@@ -413,6 +402,34 @@ def generate_html_report(
         body.dark-mode .search-section, body.dark-mode .stock-card,
         body.dark-mode .detail-panel {{ background: #2d2d44; color: #dfe6e9; }}
         body.dark-mode .section h2 {{ color: #dfe6e9; }}
+
+        /* Analysis Table */
+        .analysis-table {{ width: 100%; border-collapse: separate; border-spacing: 0 6px; }}
+        .analysis-table td {{ padding: 4px 8px; vertical-align: middle; }}
+        .analysis-table .alabel {{ font-size: 13px; font-weight: 600; color: #2d3436; white-space: nowrap; width: 48px; }}
+        .analysis-table .abar {{ position: relative; width: 100%; }}
+        .analysis-table .abar-track {{
+            height: 20px; background: #f0f2f5; border-radius: 10px; overflow: hidden; position: relative;
+        }}
+        .analysis-table .abar-fill {{
+            height: 100%; border-radius: 10px; transition: width 1s ease;
+            display: flex; align-items: center; justify-content: flex-end;
+            padding-right: 6px; font-size: 10px; color: white; font-weight: 700;
+            min-width: 24px;
+        }}
+        .analysis-table .avalue {{ font-size: 14px; font-weight: 700; color: #2d3436; width: 32px; text-align: center; }}
+        .analysis-table .apctile {{ font-size: 12px; color: #636e72; width: 36px; text-align: center; }}
+        .analysis-table .ainsight {{ font-size: 11px; color: #636e72; padding-left: 8px; min-width: 56px; }}
+        .ainsight-badge {{ display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; }}
+        .ainsight-badge.excellent {{ background: #00b894; color: white; }}
+        .ainsight-badge.good {{ background: #0984e3; color: white; }}
+        .ainsight-badge.average {{ background: #fdcb6e; color: #2d3436; }}
+        .ainsight-badge.poor {{ background: #e17055; color: white; }}
+        .ainsight-badge.bad {{ background: #d63031; color: white; }}
+
+        /* Detail Sub-header */
+        .detail-sub {{ font-size: 13px; color: #636e72; margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #f0f0f0; }}
+        .detail-sub span {{ font-weight: 600; }}
 
         @media (max-width: 600px) {{
             .container {{ padding: 10px; }}
@@ -472,17 +489,15 @@ def generate_html_report(
             <div><span class="dh-score" id="dScore"></span> <span class="dh-meta">综合评分</span></div>
         </div>
         <div class="chart-row">
-            <div class="chart-box"><h3>📊 多因子评分</h3><canvas id="radarChart" width="280" height="260"></canvas></div>
-            <div class="chart-box"><h3>📈 长期股价走势</h3><canvas id="priceChart" width="320" height="220"></canvas></div>
+            <div class="chart-box"><h3>📊 多因子雷达</h3><canvas id="radarChart" width="360" height="300"></canvas></div>
+            <div class="chart-box"><h3>📈 长期股价走势</h3><canvas id="priceChart" width="400" height="260"></canvas></div>
         </div>
-        <h3 style="font-size:14px;color:#636e72;margin:16px 0 8px">各因子得分</h3>
-        <div class="score-bars" id="scoreBars"></div>
-        <h3 style="font-size:14px;color:#636e72;margin:16px 0 8px">历史分位排名（相对全市场）</h3>
-        <div class="score-bars" id="pctileBars"></div>
+        <div class="detail-sub">📋 <span>因子分析</span> · 评分 vs 全市场分位</div>
+        <table class="analysis-table" id="analysisTable"></table>
     </div>
 
     <div class="footer">
-        自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · GitHub Actions
+        自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · 数据驱动决策
         <div class="info">
             📊 数据来源: baostock (日线行情+财务数据) | akshare (成分股列表)<br>
             📈 评分模型: 估值(25%) + 基本面(25%) + 量能(25%) + 动量(15%) + 资金流(10%)<br>
@@ -568,6 +583,14 @@ function quickFilter(type) {{
 
 function hideDetail() {{ document.getElementById('detailPanel').style.display = 'none'; }}
 
+function _getInsight(score) {{
+  if (score >= 80) return {{ text: '优秀', cls: 'excellent' }};
+  if (score >= 60) return {{ text: '良好', cls: 'good' }};
+  if (score >= 40) return {{ text: '一般', cls: 'average' }};
+  if (score >= 20) return {{ text: '较差', cls: 'poor' }};
+  return {{ text: '很差', cls: 'bad' }};
+}}
+
 function showDetail(symbol) {{
   var s = allStocks.find(function(x){{return x.symbol===symbol}});
   if (!s) return;
@@ -579,40 +602,40 @@ function showDetail(symbol) {{
   if (tag) {{ dTag.textContent = tag; dTag.style.display = 'inline-block'; dTag.className = 'tag tag-' + tag; }}
   else {{ dTag.style.display = 'none'; }}
 
-  var sb = document.getElementById('scoreBars');
-  sb.innerHTML = '';
+  // Build unified analysis table
+  var tbl = document.getElementById('analysisTable');
+  tbl.innerHTML = '';
+  var rows = '';
   for (var i = 0; i < FACTORS.length; i++) {{
     var score = s[FACTORS[i]];
     score = score !== null && score !== undefined ? score : 0;
-    sb.innerHTML += '<div class="score-bar-row">' +
-      '<span class="score-bar-label">' + FACTOR_LABELS[i] + '</span>' +
-      '<div class="score-bar-track"><div class="score-bar-fill" style="width:' + score + '%;background:' + FACTOR_COLORS[i] + '">' + Math.round(score) + '</div></div>' +
-      '<span class="score-bar-value">' + Math.round(score) + '</span></div>';
+    var pct = (percentiles[symbol] || {{}})[FACTORS[i]];
+    pct = pct !== undefined ? (pct * 100) : 0;
+    var insight = _getInsight(Math.round(score));
+    rows += '<tr>' +
+      '<td class="alabel" style="color:' + FACTOR_COLORS[i] + '">' + FACTOR_LABELS[i] + '</td>' +
+      '<td class="abar"><div class="abar-track"><div class="abar-fill" style="width:' + score + '%;background:' + FACTOR_COLORS[i] + '">' + Math.round(score) + '</div></div></td>' +
+      '<td class="avalue">' + Math.round(score) + '</td>' +
+      '<td class="apctile">' + Math.round(pct) + '%</td>' +
+      '<td class="abar"><div class="abar-track"><div class="abar-fill" style="width:' + pct + '%;background:' + FACTOR_COLORS[i] + ';opacity:0.5"></div></div></td>' +
+      '<td class="ainsight"><span class="ainsight-badge ' + insight.cls + '">' + insight.text + '</span></td>' +
+      '</tr>';
   }}
-
-  var pct = percentiles[symbol] || {{}};
-  var pb = document.getElementById('pctileBars');
-  pb.innerHTML = '';
-  for (var i = 0; i < FACTORS.length; i++) {{
-    var p = pct[FACTORS[i]];
-    p = p !== undefined ? (p * 100).toFixed(0) : 0;
-    pb.innerHTML += '<div class="pctile-row">' +
-      '<span class="pctile-label">' + FACTOR_LABELS[i] + '</span>' +
-      '<div class="pctile-track"><div class="pctile-fill" style="width:' + p + '%;background:' + FACTOR_COLORS[i] + '"></div></div>' +
-      '<span class="pctile-value">' + p + '%</span></div>';
-  }}
+  tbl.innerHTML = rows;
 
   drawRadar(s);
   drawPriceChart(symbol);
   document.getElementById('detailPanel').style.display = 'block';
-  document.getElementById('detailPanel').scrollIntoView({{behavior:'smooth',block:'start'}});
+  document.getElementById('detailPanel').scrollIntoView({{behavior:'smooth', block:'start'}});
 }}
 
 function drawRadar(stock) {{
   var c = document.getElementById('radarChart');
   var ctx = c.getContext('2d');
-  var W = c.width, H = c.height, cx = W/2, cy = H/2, R = Math.min(W,H)/2 - 35;
+  var W = c.width, H = c.height, cx = W/2, cy = H/2 - 8, R = Math.min(W,H)/2 - 45;
   ctx.clearRect(0,0,W,H);
+  // Draw background grid rings with scale labels
+  ctx.font = '9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (var r = 0.2; r <= 1; r += 0.2) {{
     ctx.beginPath();
     for (var i = 0; i <= FACTORS.length; i++) {{
@@ -620,15 +643,21 @@ function drawRadar(stock) {{
       var x = cx + R*r*Math.cos(a), y = cy + R*r*Math.sin(a);
       i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
     }}
-    ctx.closePath(); ctx.strokeStyle = '#e9ecef'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.closePath(); ctx.strokeStyle = '#e0e4ea'; ctx.lineWidth = 0.5; ctx.stroke();
+    // Scale label at top axis
+    var lx = cx, ly = cy - R*r;
+    ctx.fillStyle = '#b2bec3'; ctx.fillText(Math.round(r*100), lx, ly);
   }}
+  // Draw axis lines
   for (var i = 0; i < FACTORS.length; i++) {{
     var a = Math.PI*2*i/FACTORS.length - Math.PI/2;
-    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+R*Math.cos(a), cy+R*Math.sin(a)); ctx.strokeStyle = '#e9ecef'; ctx.stroke();
-    var lx = cx+(R+20)*Math.cos(a), ly = cy+(R+20)*Math.sin(a);
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+R*Math.cos(a), cy+R*Math.sin(a));
+    ctx.strokeStyle = '#e0e4ea'; ctx.lineWidth = 0.5; ctx.stroke();
+    var lx = cx+(R+22)*Math.cos(a), ly = cy+(R+22)*Math.sin(a);
     ctx.fillStyle = '#636e72'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(FACTOR_LABELS[i], lx, ly);
   }}
+  // Draw data polygon
   ctx.beginPath();
   for (var i = 0; i <= FACTORS.length; i++) {{
     var idx = i % FACTORS.length;
@@ -638,21 +667,31 @@ function drawRadar(stock) {{
     var x = cx + R*v*Math.cos(a), y = cy + R*v*Math.sin(a);
     i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
   }}
-  ctx.closePath(); ctx.fillStyle = 'rgba(108,92,231,0.15)'; ctx.fill();
+  ctx.closePath(); ctx.fillStyle = 'rgba(108,92,231,0.12)'; ctx.fill();
   ctx.strokeStyle = '#6c5ce7'; ctx.lineWidth = 2; ctx.stroke();
+  // Draw data points with value labels
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (var i = 0; i < FACTORS.length; i++) {{
     var v = stock[FACTORS[i]];
     v = v !== null && v !== undefined ? v/100 : 0;
     var a = Math.PI*2*i/FACTORS.length - Math.PI/2;
-    ctx.beginPath(); ctx.arc(cx+R*v*Math.cos(a), cy+R*v*Math.sin(a), 4, 0, Math.PI*2);
+    var px = cx + R*v*Math.cos(a), py = cy + R*v*Math.sin(a);
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2);
     ctx.fillStyle = '#6c5ce7'; ctx.fill();
+    ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
+    // Value label offset outward from point
+    var off = 14;
+    var lx = px + off*Math.cos(a), ly = py + off*Math.sin(a);
+    ctx.fillStyle = '#2d3436';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(Math.round(stock[FACTORS[i]]), lx, ly);
   }}
 }}
 
 function drawPriceChart(symbol) {{
   var c = document.getElementById('priceChart');
   var ctx = c.getContext('2d');
-  var W = c.width, H = c.height, pt = 20, pr = 15, pb = 30, pl = 50;
+  var W = c.width, H = c.height, pt = 28, pr = 18, pb = 36, pl = 56;
   var cw = W-pl-pr, ch = H-pt-pb;
   ctx.clearRect(0,0,W,H);
   var data = priceHistory[symbol] || [];
@@ -662,24 +701,65 @@ function drawPriceChart(symbol) {{
   }}
   var prices = data.map(function(d){{return d.close}});
   var mn = Math.min.apply(null, prices), mx = Math.max.apply(null, prices), rg = mx-mn || 1;
-  ctx.strokeStyle = '#e9ecef'; ctx.lineWidth = 1; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  // Key price levels
+  var mid = (mn+mx)/2;
+  // Draw horizontal grid lines with price labels
+  ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  var levels = [mn, mid, mx];
+  for (var li = 0; li < levels.length; li++) {{
+    var lv = levels[li];
+    if (lv === mn || lv === mx || Math.abs(lv-mid) < rg*0.05) continue;
+    var y = pt + ch*(1-(lv-mn)/rg);
+    ctx.beginPath(); ctx.setLineDash([4,4]); ctx.moveTo(pl,y); ctx.lineTo(W-pr,y);
+    ctx.strokeStyle = '#dfe6e9'; ctx.lineWidth = 0.5; ctx.stroke();
+    ctx.setLineDash([]);
+  }}
+  // Y-axis price labels
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.font = '10px sans-serif';
   for (var i = 0; i <= 4; i++) {{
     var y = pt + ch*i/4;
-    ctx.beginPath(); ctx.moveTo(pl,y); ctx.lineTo(W-pr,y); ctx.stroke();
-    ctx.fillStyle = '#b2bec3'; ctx.fillText((mx - rg*i/4).toFixed(0), pl-5, y);
+    var price = mx - rg*i/4;
+    ctx.beginPath(); ctx.moveTo(pl,y); ctx.lineTo(W-pr,y);
+    ctx.strokeStyle = '#eef0f4'; ctx.lineWidth = 0.5; ctx.stroke();
+    ctx.fillStyle = '#b2bec3'; ctx.fillText(price.toFixed(1), pl-6, y);
   }}
+  // Price line
   ctx.beginPath();
   for (var i = 0; i < data.length; i++) {{
     var x = pl + cw*i/(data.length-1), y = pt + ch*(1-(data[i].close-mn)/rg);
     i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
   }}
   ctx.strokeStyle = '#0984e3'; ctx.lineWidth = 2; ctx.stroke();
+  // Gradient fill
   var grad = ctx.createLinearGradient(0,pt,0,pt+ch);
-  grad.addColorStop(0, 'rgba(9,132,227,0.12)'); grad.addColorStop(1, 'rgba(9,132,227,0.01)');
+  grad.addColorStop(0, 'rgba(9,132,227,0.10)'); grad.addColorStop(1, 'rgba(9,132,227,0.01)');
   ctx.lineTo(pl+cw, pt+ch); ctx.lineTo(pl, pt+ch); ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
+  // Annotate high/low points
+  var maxIdx = 0, minIdx = 0;
+  for (var i = 0; i < prices.length; i++) {{
+    if (prices[i] > prices[maxIdx]) maxIdx = i;
+    if (prices[i] < prices[minIdx]) minIdx = i;
+  }}
+  function annotatePoint(idx, color, label) {{
+    var x = pl + cw*idx/(data.length-1), y = pt + ch*(1-(prices[idx]-mn)/rg);
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI*2);
+    ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = color; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(label + ' ' + prices[idx].toFixed(1) + '↗', x, y-12);
+  }}
+  annotatePoint(maxIdx, '#d63031', '高');
+  annotatePoint(minIdx, '#00b894', '低');
+  // X-axis date labels (show ~5 evenly spaced dates)
   ctx.fillStyle = '#b2bec3'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText(data[0].date.slice(0,7), pl, H-18);
-  ctx.fillText(data[data.length-1].date.slice(0,7), W-pr, H-18);
+  var steps = Math.min(5, data.length);
+  var interval = Math.max(1, Math.floor((data.length-1)/(steps-1)));
+  for (var i = 0; i < data.length; i += interval) {{
+    var x = pl + cw*i/(data.length-1);
+    var dateStr = data[i].date.slice(0,7);
+    ctx.fillText(dateStr, x, H-14);
+  }}
+  // Last date label
+  ctx.fillText(data[data.length-1].date.slice(0,7), W-pr, H-14);
 }}
 
 if (allStocks.length > 0) {{
