@@ -12,13 +12,19 @@ DATA_DIR.mkdir(exist_ok=True)
 KLINE_CACHE_FILE = DATA_DIR / "klines.parquet"
 FUNDA_CACHE_FILE = DATA_DIR / "fundamentals.parquet"
 
+# 缓存过期配置
+CACHE_CONFIG = {
+    "kline_max_age_hours": 24,   # 日线缓存超过24小时强制刷新
+    "funda_max_age_days": 7,     # 基本面缓存超过7天强制刷新
+}
+
 # 中证500 指数代码
 CSI500_INDEX_CODE = "000905"
 
 # 估值分析参数
 VALUATION_CONFIG = {
-    "pe_percentile_years": 5,
-    "pb_percentile_years": 5,
+    "pe_percentile_years": 10,
+    "pb_percentile_years": 10,
     "pe_overvalued_threshold": 80,
     "pe_undervalued_threshold": 20,
 }

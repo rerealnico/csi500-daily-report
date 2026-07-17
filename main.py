@@ -9,6 +9,7 @@ if sys.stdout.encoding != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 import time
+import traceback
 from datetime import datetime
 
 from config import REPORT_CONFIG
@@ -20,11 +21,10 @@ from data_fetcher import (
 from valuation_analyzer import calculate_valuation_scores
 from volume_analyzer import calculate_volume_scores
 from fundamental_analyzer import fetch_fundamentals, calculate_fundamental_scores
+from capital_flow_analyzer import calculate_capital_flow_scores
 from scorer import calculate_final_scores, print_top_bottom
 from reporter import generate_report, save_report
 from visualizer import generate_all_charts
-from notifier import push_report
-from image_host import upload_images
 from report_html import generate_html_report
 
 
@@ -81,9 +81,13 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
     # 4b. 量能分析
     volume_scores = calculate_volume_scores(klines)
 
-    # 4c. 综合评分（含基本面因子）
+    # 4c. 资金流分析
+    capital_flow_scores = calculate_capital_flow_scores(klines)
+
+    # 4d. 综合评分（含基本面因子）
     final_scores = calculate_final_scores(
-        constituents, valuation_scores, volume_scores, fundamental_scores
+        constituents, valuation_scores, volume_scores, fundamental_scores,
+        capital_flow_scores
     )
 
     # ===== Step 5: 输出报告 =====
@@ -118,20 +122,9 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
             report_date=trade_date,
         )
         
-        # 上传图表到图床，获取URL用于微信推送
-        print(f"\n[图表上传] 上传到图床...")
-        image_urls = upload_images(chart_files)
-        if image_urls:
-            print(f"  [OK] {len(image_urls)} 张图片已上传")
-        else:
-            print(f"  [INFO] 图床上传跳过，仅推送文本报告")
-    else:
-        print(f"\n[Step 6/7] 云函数模式：跳过本地文件保存")
-        chart_files = None
-        image_urls = None
-
-    # ===== 推送报告到微信 =====
-    push_report(report_text, report_date=trade_date, image_urls=image_urls)
+        # HTML 报告已包含 base64 内嵌图表，可直接用于 GitHub Pages
+        print(f"\n[推送] 微信推送已禁用（你只需要打开网页链接查看）")
+    # 微信推送已在 notifier_config.json 中 disabled
 
     # ===== Step 7: 输出统计 =====
     elapsed = time.time() - start_time
@@ -171,4 +164,9 @@ if __name__ == "__main__":
         print_diagnosis(diag)
     else:
         print("参数: test=%s, max=%s" % (args.test, args.max))
-        run_pipeline(max_stocks=args.max, test_mode=args.test)
+        try:
+            run_pipeline(max_stocks=args.max, test_mode=args.test)
+        except Exception as e:
+            print(f"\n[FATAL] 分析管线执行异常: {e}")
+            traceback.print_exc()
+            sys.exit(1)

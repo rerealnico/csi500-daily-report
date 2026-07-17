@@ -237,6 +237,7 @@ def plot_dashboard(
         ("基本面", "fundamental_score", COLORS["secondary"]),
         ("量能", "volume_score", COLORS["accent"]),
         ("动量", "momentum_score", COLORS["purple"]),
+        ("资金流", "capital_flow_score", COLORS["pink"]),
     ]
 
     for i, (label, col, color) in enumerate(metrics):
@@ -256,8 +257,8 @@ def plot_dashboard(
         ax2 = fig.add_axes([0.55, 0.55, 0.42, 0.38], projection="polar")
         best = top_stocks.iloc[0]
 
-        categories = ["估值", "基本面", "量能", "动量"]
-        cols = ["valuation_score", "fundamental_score", "volume_score", "momentum_score"]
+        categories = ["估值", "基本面", "量能", "动量", "资金流"]
+        cols = ["valuation_score", "fundamental_score", "volume_score", "momentum_score", "capital_flow_score"]
         values = [float(best.get(c, 50)) / 100 * 5 for c in cols]
 
         angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
@@ -334,11 +335,21 @@ def generate_all_charts(
     output_dir.mkdir(exist_ok=True)
 
     charts = []
-    charts.append(plot_score_distribution(scores, output_dir))
-    charts.append(plot_top_stocks(scores, top_n=20, output_dir=output_dir))
+    try:
+        charts.append(plot_score_distribution(scores, output_dir))
+    except Exception as e:
+        print(f"  [WARN] 评分分布图生成失败: {e}")
+
+    try:
+        charts.append(plot_top_stocks(scores, top_n=20, output_dir=output_dir))
+    except Exception as e:
+        print(f"  [WARN] Top推荐图生成失败: {e}")
 
     if klines is not None:
-        charts.append(plot_dashboard(scores, klines, top_n=5, output_dir=output_dir))
+        try:
+            charts.append(plot_dashboard(scores, klines, top_n=5, output_dir=output_dir))
+        except Exception as e:
+            print(f"  [WARN] 仪表盘生成失败: {e}")
 
     return charts
 
@@ -360,184 +371,3 @@ if __name__ == "__main__":
 
     generate_all_charts(final, klines)
     print("\n所有图表生成完成！")
-"""
-可视化模块 - 生成复盘分析图表
-"""
-import matplotlib
-matplotlib.use("Agg")  # 非交互式后端，避免 GUI 弹窗
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import pandas as pd
-import numpy as np
-from pathlib import Path
-from config import REPORT_CONFIG
-
-
-# ========== 中文字体设置 ==========
-
-def _setup_chinese_font():
-    """设置 matplotlib 支持中文显示"""
-    # Windows 常见中文字体
-    font_candidates = [
-        "Microsoft YaHei",      # 微软雅黑
-        "SimHei",               # 黑体
-        "DengXian",             # 等线
-        "Source Han Sans CN",   # 思源黑体
-    ]
-    for font_name in font_candidates:
-        try:
-            fm.findfont(font_name, fallback_to_default=False)
-            plt.rcParams["font.sans-serif"] = [font_name]
-            plt.rcParams["axes.unicode_minus"] = False
-            return True
-        except Exception:
-            continue
-    # 回退：使用默认字体（会显示方框）
-    print("  [WARN] 未找到中文字体，图表中文可能显示为方框")
-    return False
-
-
-# ========== 图表生成 ==========
-
-def plot_score_distribution(
-    scores: pd.DataFrame,
-    output_dir: Path = None,
-) -> str:
-    """
-    评分分布直方图
-    """
-    if output_dir is None:
-        output_dir = REPORT_CONFIG["output_dir"]
-    _setup_chinese_font()
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle("中证500 多因子评分分布", fontsize=16, fontweight="bold")
-
-    # 1. 总分分布
-    ax = axes[0, 0]
-    ax.hist(scores["total_score"], bins=30, color="#2196F3", edgecolor="white", alpha=0.8)
-    ax.axvline(scores["total_score"].median(), color="red", linestyle="--", label=f'中位数: {scores["total_score"].median():.1f}')
-    ax.set_xlabel("综合评分")
-    ax.set_ylabel("股票数量")
-    ax.set_title("综合评分分布")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
-
-    # 2. 估值评分分布
-    ax = axes[0, 1]
-    if "valuation_score" in scores.columns:
-        ax.hist(scores["valuation_score"].dropna(), bins=30, color="#4CAF50", edgecolor="white", alpha=0.8)
-        ax.set_xlabel("估值评分")
-        ax.set_ylabel("股票数量")
-        ax.set_title("估值评分分布")
-        ax.grid(axis="y", alpha=0.3)
-
-    # 3. 量能评分分布
-    ax = axes[1, 0]
-    if "volume_score" in scores.columns:
-        ax.hist(scores["volume_score"].dropna(), bins=30, color="#FF9800", edgecolor="white", alpha=0.8)
-        ax.set_xlabel("量能评分")
-        ax.set_ylabel("股票数量")
-        ax.set_title("量能评分分布")
-        ax.grid(axis="y", alpha=0.3)
-
-    # 4. 估值 vs 量能散点图
-    ax = axes[1, 1]
-    if "valuation_score" in scores.columns and "volume_score" in scores.columns:
-        # 按总分大小给色
-        scatter = ax.scatter(
-            scores["valuation_score"], scores["volume_score"],
-            c=scores["total_score"], cmap="RdYlGn", alpha=0.6, s=20
-        )
-        plt.colorbar(scatter, ax=ax, label="综合评分")
-        ax.set_xlabel("估值评分")
-        ax.set_ylabel("量能评分")
-        ax.set_title("估值 vs 量能 分布")
-        ax.grid(alpha=0.3)
-
-        # 标出 Top10
-        top10 = scores.head(10)
-        for _, row in top10.iterrows():
-            ax.annotate(
-                row.get("stock_name", ""),
-                (row["valuation_score"], row["volume_score"]),
-                fontsize=7, alpha=0.8,
-            )
-
-    plt.tight_layout()
-    filepath = output_dir / "score_distribution.png"
-    fig.savefig(filepath, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  [OK] 评分分布图已保存: {filepath}")
-    return str(filepath)
-
-
-def plot_top_stocks(
-    scores: pd.DataFrame,
-    top_n: int = 20,
-    output_dir: Path = None,
-) -> str:
-    """
-    Top N 推荐股票横向柱状图
-    """
-    if output_dir is None:
-        output_dir = REPORT_CONFIG["output_dir"]
-    _setup_chinese_font()
-
-    top = scores.head(top_n).copy()
-    top = top.iloc[::-1]  # 倒序让最高的在上方
-
-    fig, ax = plt.subplots(figsize=(12, max(6, top_n * 0.4)))
-
-    labels = [f"{row.get('stock_name', '')}\n({row.get('symbol', '')})" for _, row in top.iterrows()]
-
-    y_pos = range(len(top))
-    colors = plt.cm.RdYlGn(top["total_score"] / 100)
-
-    bars = ax.barh(y_pos, top["total_score"].values, color=colors, edgecolor="white")
-
-    # 在柱子上标出各因子分
-    for i, (_, row) in enumerate(top.iterrows()):
-        parts = []
-        if "valuation_score" in row:
-            parts.append(f"估{row['valuation_score']:.0f}")
-        if "volume_score" in row:
-            parts.append(f"量{row['volume_score']:.0f}")
-        info = " | ".join(parts)
-        ax.text(
-            row["total_score"] + 0.5, i,
-            info,
-            va="center", fontsize=8, color="gray"
-        )
-
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(labels, fontsize=9)
-    ax.set_xlabel("综合评分")
-    ax.set_title(f"中证500 Top {top_n} 推荐", fontsize=14, fontweight="bold")
-    ax.set_xlim(0, scores["total_score"].max() + 15)
-    ax.grid(axis="x", alpha=0.3)
-
-    filepath = output_dir / "top_stocks.png"
-    fig.savefig(filepath, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  [OK] Top{top_n} 推荐图已保存: {filepath}")
-    return str(filepath)
-
-
-if __name__ == "__main__":
-    # 测试可视化
-    from data_fetcher import fetch_csi500_constituents, fetch_daily_klines
-    from valuation_analyzer import calculate_valuation_scores
-    from volume_analyzer import calculate_volume_scores
-    from scorer import calculate_final_scores
-
-    constituents = fetch_csi500_constituents()
-    symbols = constituents["symbol"].tolist()[:10]
-    klines = fetch_daily_klines(symbols)
-
-    val = calculate_valuation_scores(klines)
-    vol = calculate_volume_scores(klines)
-    final = calculate_final_scores(constituents, val, vol)
-
-    plot_score_distribution(final)
-    plot_top_stocks(final, 10)
