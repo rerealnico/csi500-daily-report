@@ -52,22 +52,6 @@ jobs:
           SENDKEY: ${{ secrets.SENDKEY }}
         run: python main.py
 
-      - name: 📎 上传报告和图表 (Artifacts)
-        uses: actions/upload-artifact@v4
-        with:
-          name: reports
-          path: reports/
-          retention-days: 7
-
-      - name: 🚀 部署到 GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: reports/
-          publish_branch: gh-pages
-          keep_files: false
-          full_commit_message: 每日复盘报告 ${{ github.run_id }}
-
       - name: ☁️ 部署到 Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -79,5 +63,4 @@ jobs:
       - name: 完成通知
         run: |
           echo "✅ 中证500每日复盘分析完成！"
-          echo "📊 GitHub Pages: https://rerealnico.github.io/csi500-daily-report/report.html"
           echo "☁️ Cloudflare Pages: https://csi500-daily-report.pages.dev/report.html"
