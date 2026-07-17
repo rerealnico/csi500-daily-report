@@ -68,5 +68,16 @@ jobs:
           keep_files: false
           full_commit_message: 每日复盘报告 ${{ github.run_id }}
 
+      - name: ☁️ 部署到 Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npx wrangler pages deploy reports/ \
+            --project-name csi500-daily-report \
+            --branch main
+
       - name: 完成通知
-        run: echo "✅ 中证500每日复盘分析完成！报告已发布到 GitHub Pages"
+        run: |
+          echo "✅ 中证500每日复盘分析完成！"
+          echo "📊 GitHub Pages: https://rerealnico.github.io/csi500-daily-report/report.html"
+          echo "☁️ Cloudflare Pages: https://csi500-daily-report.pages.dev/report.html"
