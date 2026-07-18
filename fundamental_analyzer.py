@@ -273,8 +273,20 @@ def calculate_fundamental_scores(fundamentals: pd.DataFrame) -> pd.DataFrame:
     # 8. 亏损惩罚（根据配置决定是否启用）
     if FUNDAMENTAL_CONFIG["filters"]["penalize_loss"]:
         loss_mask = df["is_loss"]
-        df.loc[loss_mask, "fundamental_score"] = df.loc[loss_mask, "fundamental_score"] * 0.3
-        df.loc[loss_mask, "fundamental_score"] = df.loc[loss_mask, "fundamental_score"].clip(upper=40)
+        # 差异化惩罚：区分研发型亏损 vs 真实亏损
+        # 如果经营现金流为正（cfo_to_np>0.5），可能是研发/折旧等非现金支出导致的亏损
+        # → 轻惩罚（打6折）；否则重惩罚（打3折）
+        light_loss = loss_mask & df["cfo_to_np"].fillna(0).gt(0.5)
+        heavy_loss = loss_mask & ~light_loss
+
+        df.loc[light_loss, "fundamental_score"] = df.loc[light_loss, "fundamental_score"] * 0.6
+        df.loc[light_loss, "fundamental_score"] = df.loc[light_loss, "fundamental_score"].clip(upper=55)
+        df.loc[heavy_loss, "fundamental_score"] = df.loc[heavy_loss, "fundamental_score"] * 0.3
+        df.loc[heavy_loss, "fundamental_score"] = df.loc[heavy_loss, "fundamental_score"].clip(upper=40)
+
+        light_count = light_loss.sum()
+        heavy_count = heavy_loss.sum()
+        print(f"  [INFO] 亏损股差异化惩罚: 轻罚(研发型) {light_count} 只 ×0.6, 重罚 {heavy_count} 只 ×0.3")
 
     print(f"  [OK] 基本面评分完成 | 亏损股: {df['is_loss'].sum()} 只")
     print(f"        得分范围: {df['fundamental_score'].min():.1f} ~ {df['fundamental_score'].max():.1f}")
@@ -320,7 +332,10 @@ def _margin_to_score(margin: float) -> float:
 
 
 def _debt_to_score(ratio: float) -> float:
-    """资产负债率转评分（越低越好）"""
+    """资产负债率转评分（越低越好）
+    注意：银行/保险/券商等金融行业负债率天然高（85-95%），
+    此评分会系统性压低金融股得分。
+    """
     if ratio is None:
         return 40
     if ratio <= 0.2:
@@ -335,14 +350,20 @@ def _debt_to_score(ratio: float) -> float:
         return 35  # 高负债
     elif ratio <= 0.85:
         return 20  # 很高
+    elif ratio <= 0.95:
+        return 15  # 金融行业典型范围（85-95%）
     else:
         return 10  # 资不抵债
 
 
 def _cashflow_to_score(cfo_to_np: float) -> float:
-    """经营现金流/净利润 转评分（>1 说明利润有现金保障）"""
+    """经营现金流/净利润 转评分（>1 说明利润有现金保障）
+    极端值保护：净利润接近0时cfo_to_np→∞，上限5
+    """
     if cfo_to_np is None:
         return 40
+    # 极端值保护：净利润极小导致比率异常大
+    cfo_to_np = min(cfo_to_np, 5.0)
     if cfo_to_np > 2:
         return 90
     elif cfo_to_np > 1.2:

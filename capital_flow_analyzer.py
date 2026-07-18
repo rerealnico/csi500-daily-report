@@ -1,6 +1,14 @@
 """
-资金流分析模块 - 从行情数据估算资金流向与活跃度
-基于量价背离、成交量趋势、振幅活跃度等指标
+量价配合分析模块 - 从行情数据估算量价关系与活跃度
+
+⚠️ 重要说明：
+本模块基于公开行情数据（价格+成交量）间接估算资金活跃度，
+并非真实的Level-2资金流数据。输出仅供参考，不反映主力资金真实动向。
+
+分析维度：
+- OHLC位置分析（收盘价在当日振幅中的位置 → 买卖压力代理）
+- 成交量趋势（近期成交量相对历史均量的变化方向）
+- 振幅活跃度（价格波动区间）
 """
 import pandas as pd
 import numpy as np
@@ -41,27 +49,43 @@ def calculate_capital_flow_scores(klines: pd.DataFrame) -> pd.DataFrame:
         volume_series = group["volume"].astype(float)
         close_series = group["close"].astype(float)
 
-        # 1. 量价背离检测
-        price_ma5 = close_series.rolling(5).mean()
-        volume_ma5 = volume_series.rolling(5).mean()
+        # ========== 替换量价背离检测 ==========
+        # 原版用 price_trend_5d + vol_trend_5d 判断，与 volume_analyzer 的
+        # price_volume_score 高度重合（双重加权）。改用 OHLC 位置分析：
+        # 收盘价在当日振幅中的位置 → 买卖压力代理
+        # 高开低走收盘在低位 → 卖出压力大
+        # 低开高走收盘在高位 → 买入意愿强
 
-        # 近5日价格趋势 vs 量能趋势
+        # 仍计算 price_trend_5d 用于输出显示（不用于评分）
         price_trend_5d = (close_series.iloc[-1] / close_series.iloc[-6]) - 1 if len(close_series) >= 6 else 0
-        vol_trend_5d = (volume_ma5.iloc[-1] / volume_ma5.iloc[-6]) - 1 if len(volume_ma5) >= 6 else 0
+        vol_trend_5d = (volume_series.rolling(5).mean().iloc[-1] / volume_series.rolling(5).mean().iloc[-6]) - 1 if len(volume_series) >= 6 else 0
 
-        # 量价配合评分
-        if price_trend_5d > 0.02 and vol_trend_5d > 0.05:
-            divergence_score = 85   # 价涨量增 → 资金流入
-        elif price_trend_5d > 0.02 and vol_trend_5d > -0.05:
-            divergence_score = 65   # 价涨量稳
-        elif price_trend_5d > 0.02:
-            divergence_score = 50   # 价涨量缩 → 上涨乏力
-        elif price_trend_5d < -0.02 and vol_trend_5d > 0.05:
-            divergence_score = 20   # 价跌量增 → 资金流出
-        elif price_trend_5d < -0.02 and vol_trend_5d < -0.05:
-            divergence_score = 60   # 价跌量缩 → 抛压减弱
+        ohlc_pressure = 0
+        count_valid = 0
+        for i in range(max(0, len(group)-5), len(group)):
+            row = group.iloc[i]
+            high = float(row.get("high", 0))
+            low = float(row.get("low", 0))
+            close = float(row.get("close", 0))
+            open_p = float(row.get("open", 0))
+            if high > low and close > 0:
+                # 收盘在振幅中的位置: 0(最低)~1(最高)
+                range_pos = (close - low) / (high - low + 1e-10)
+                range_pos = max(0, min(1, range_pos))
+                # 收盘在振幅上1/3 → 买入压力 (0.8~1.0区间 → 60~85分)
+                # 收盘在振幅下1/3 → 卖出压力 (0~0.33区间 → 15~40分)
+                if range_pos > 0.66:
+                    ohlc_pressure += 60 + 25 * (range_pos - 0.66) / 0.34
+                elif range_pos < 0.33:
+                    ohlc_pressure += 40 - 25 * (0.33 - range_pos) / 0.33
+                else:
+                    ohlc_pressure += 50
+                count_valid += 1
+
+        if count_valid > 0:
+            divergence_score = ohlc_pressure / count_valid
         else:
-            divergence_score = 45   # 中性
+            divergence_score = 50
 
         # 2. 成交量趋势评分（近10日均量 vs 近60日均量）
         vol_ma10 = volume_series.tail(10).mean()
@@ -117,7 +141,8 @@ def calculate_capital_flow_scores(klines: pd.DataFrame) -> pd.DataFrame:
         })
 
     result = pd.DataFrame(results)
-    print(f"  [OK] 资金流评分计算完成，共 {len(result)} 只股票")
+    print(f"  [OK] 量价配合评分计算完成，共 {len(result)} 只股票")
+    print(f"  [INFO] 注意：评分为基于公开行情的估算值，非真实Level-2资金流数据")
     return result
 
 

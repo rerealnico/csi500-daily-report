@@ -25,20 +25,30 @@ def calculate_valuation_scores(
 
     price_percentiles = (
         hist.groupby("symbol")["close"]
-        .agg(["min", "max", "mean", "std", lambda x: x.iloc[-1]])
-        .rename(columns={"<lambda_0>": "current_close"})
+        .agg(["min", "max", "mean", "std",
+              lambda x: x.iloc[-1],
+              lambda x: x.quantile(0.05),
+              lambda x: x.quantile(0.95)])
+        .rename(columns={"<lambda_0>": "current_close",
+                         "<lambda_1>": "p5",
+                         "<lambda_2>": "p95"})
     )
+    # 使用 p5-p95 范围计算百分位（避免异常极值扭曲）
     price_percentiles["close_percentile"] = (
-        (price_percentiles["current_close"] - price_percentiles["min"])
-        / (price_percentiles["max"] - price_percentiles["min"] + 1e-10)
-    )
+        (price_percentiles["current_close"] - price_percentiles["p5"])
+        / (price_percentiles["p95"] - price_percentiles["p5"] + 1e-10)
+    ).clip(0, 1)
 
     # 2. 从 klines 提取最新 PE/PB
     latest = klines.sort_values("date").groupby("symbol").last()
 
     if "pe" in klines.columns and latest["pe"].notna().sum() > 0:
+        # 检查 pb 列是否存在
+        merge_cols = ["pe"]
+        if "pb" in latest.columns:
+            merge_cols.append("pb")
         merged = price_percentiles.merge(
-            latest[["pe", "pb"]], left_index=True, right_index=True, how="left"
+            latest[merge_cols], left_index=True, right_index=True, how="left"
         )
         merged["pe_rank"] = merged["pe"].rank(pct=True)
         merged["pb_rank"] = merged["pb"].rank(pct=True)

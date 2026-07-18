@@ -434,7 +434,7 @@ def generate_html_report(
     <div class="header">
         <h1>📈 中证500 多因子分析</h1>
         <div class="date">报告日期: {report_date}</div>
-        <div class="sub">数据来源: baostock | 评分模型: 估值+基本面+量能+动量+资金流</div>
+        <div class="sub">数据来源: baostock | 评分模型: 估值+基本面+量能+动量+量价配合</div>
     </div>
 
     <!-- Summary -->
@@ -465,7 +465,7 @@ def generate_html_report(
                 <option value="fundamental_score">基本面</option>
                 <option value="volume_score">量能</option>
                 <option value="momentum_score">动量</option>
-                <option value="capital_flow_score">资金流</option>
+                <option value="capital_flow_score">量价配合</option>
             </select>
             <label for="sortDir">方向:</label>
             <select id="sortDir" onchange="changeSort()">
@@ -500,7 +500,7 @@ def generate_html_report(
         自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · 数据驱动决策
         <div class="info">
             📊 数据来源: baostock (日线行情+财务数据) | akshare (成分股列表)<br>
-            📈 评分模型: 估值(25%) + 基本面(25%) + 量能(25%) + 动量(15%) + 资金流(10%)<br>
+            📈 评分模型: 估值(25%) + 基本面(25%) + 量能(25%) + 动量(15%) + 量价配合(10%)<br>
             ⚠️ 本报告仅供参考，不构成投资建议
         </div>
     </div>
@@ -519,7 +519,7 @@ try {{ priceHistory = JSON.parse(document.getElementById('price-history-data').t
 try {{ percentiles = JSON.parse(document.getElementById('percentiles-data').textContent); }} catch(e) {{}}
 
 var FACTORS = ['valuation_score','fundamental_score','volume_score','momentum_score','capital_flow_score'];
-var FACTOR_LABELS = ['估值','基本面','量能','动量','资金流'];
+var FACTOR_LABELS = ['估值','基本面','量能','动量','量价配合'];
 var FACTOR_COLORS = ['#6c5ce7','#00b894','#0984e3','#fdcb6e','#e17055'];
 
 function toggleDarkMode() {{

@@ -81,5 +81,15 @@ FUNDAMENTAL_CONFIG = {
 REPORT_CONFIG = {
     "top_n": 10,
     "output_dir": PROJECT_ROOT / "reports",
+    "max_txt_reports": 20,  # 保留最多20个历史文本报告
+}
+
+# 评分动作标签阈值（可自定义）
+SCORE_THRESHOLDS = {
+    "strong_buy": 75,    # ≥75 → 推荐关注
+    "buy": 65,           # ≥65 → 可以关注
+    "hold": 50,          # ≥50 → 持有观望
+    "caution": 35,       # ≥35 → 谨慎观察
+    # <35 → 注意风险
 }
 REPORT_CONFIG["output_dir"].mkdir(exist_ok=True)

@@ -80,11 +80,26 @@ def generate_report(
 
 
 def save_report(report_text: str) -> str:
-    """保存报告到文件"""
+    """保存报告到文件，并清理旧报告（保留最新 max_txt_reports 个）"""
     date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = REPORT_CONFIG["output_dir"] / f"report_{date_str}.txt"
     filepath.write_text(report_text, encoding="utf-8")
     print(f"\n[报告] 已保存至: {filepath}")
+
+    # 清理旧文本报告，只保留最新的 max_txt_reports 个
+    try:
+        max_keep = REPORT_CONFIG.get("max_txt_reports", 20)
+        report_dir = REPORT_CONFIG["output_dir"]
+        txt_files = sorted(
+            [f for f in report_dir.glob("report_*.txt") if f.is_file()],
+            key=lambda f: f.stat().st_mtime, reverse=True
+        )
+        for old_file in txt_files[max_keep:]:
+            old_file.unlink()
+            print(f"  [清理] 删除旧报告: {old_file.name}")
+    except Exception as e:
+        print(f"  [WARN] 清理旧报告失败: {e}")
+
     return str(filepath)
 
 

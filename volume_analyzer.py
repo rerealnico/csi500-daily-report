@@ -60,6 +60,14 @@ def calculate_volume_scores(klines: pd.DataFrame) -> pd.DataFrame:
             recent_5["close"].iloc[-1] - recent_5["close"].iloc[0]
         ) / recent_5["close"].iloc[0]
 
+        # 20日价格趋势（用于动量评分，减少5日噪音）
+        if len(group) >= 20:
+            price_trend_20d = (
+                group["close"].iloc[-1] - group["close"].iloc[-20]
+            ) / group["close"].iloc[-20]
+        else:
+            price_trend_20d = price_trend
+
         volume_trend = (
             recent_5["volume"].astype(float).mean()
             / (volume_series.tail(20).mean() + 1e-10)
@@ -114,6 +122,7 @@ def calculate_volume_scores(klines: pd.DataFrame) -> pd.DataFrame:
             "turnover": latest["turnover"],
             "turnover_ma20": round(turnover_ma20, 2),
             "price_trend_5d": round(price_trend * 100, 2),
+            "price_trend_20d": round(price_trend_20d * 100, 2),
             "volume_trend_5d": round(volume_trend, 2),
             "price_volume_score": round(price_volume_score, 1),
             "volume_zscore": round(volume_zscore, 2),

@@ -3,7 +3,7 @@
 """
 import pandas as pd
 import numpy as np
-from config import SCORE_WEIGHTS
+from config import SCORE_WEIGHTS, SCORE_THRESHOLDS
 
 
 def calculate_final_scores(
@@ -97,9 +97,16 @@ def calculate_final_scores(
                 print(f"  [WARN] {c} 有 {n_na} 只股票缺失，填充保守值35分")
             merged[c] = merged[c].fillna(35).astype(float)
 
-    # 4. 动量因子：用价格趋势计算
+    # 4. 动量因子：用价格趋势计算（40% 5日 + 60% 20日，减少噪音）
     if "price_trend_5d" in merged.columns:
-        merged["momentum_score"] = merged["price_trend_5d"].apply(
+        trend_5d = merged["price_trend_5d"]
+        if "price_trend_20d" in merged.columns:
+            trend_20d = merged["price_trend_20d"]
+            # 加权动量，20日权重更高以过滤噪音
+            combined_trend = 0.4 * trend_5d + 0.6 * trend_20d
+        else:
+            combined_trend = trend_5d
+        merged["momentum_score"] = combined_trend.apply(
             _price_trend_to_score
         ).astype(float)
     else:
@@ -162,14 +169,15 @@ def _price_trend_to_score(trend_pct: float) -> float:
 
 
 def _score_to_action(score: float) -> str:
-    """根据总分打操作标签"""
-    if score >= 75:
+    """根据总分打操作标签（阈值来自 config.SCORE_THRESHOLDS）"""
+    t = SCORE_THRESHOLDS
+    if score >= t["strong_buy"]:
         return "推荐关注"
-    elif score >= 65:
+    elif score >= t["buy"]:
         return "可以关注"
-    elif score >= 50:
+    elif score >= t["hold"]:
         return "持有观望"
-    elif score >= 35:
+    elif score >= t["caution"]:
         return "谨慎观察"
     else:
         return "注意风险"
