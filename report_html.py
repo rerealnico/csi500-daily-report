@@ -214,6 +214,19 @@ def generate_html_report(
             box-shadow: 0 2px 8px rgba(102,126,234,0.3);
         }}
 
+        /* Sort Select */
+        .sort-row {{
+            display: flex; gap: 10px; align-items: center; margin: 12px 0;
+            flex-wrap: wrap;
+        }}
+        .sort-row label {{ font-size: 13px; color: #636e72; font-weight: 500; }}
+        .sort-row select {{
+            padding: 8px 14px; border: 1px solid #e9ecef; border-radius: 8px;
+            font-size: 13px; background: white; color: #2d3436;
+            cursor: pointer; transition: border-color 0.2s;
+        }}
+        .sort-row select:focus {{ outline: none; border-color: #667eea; }}
+
         .result-count {{ font-size: 13px; color: #636e72; margin: 8px 0; }}
         .result-count strong {{ color: #667eea; }}
 
@@ -343,7 +356,8 @@ def generate_html_report(
                 background: #3d3d56; color: #dfe6e9; border-color: #3d3d56;
             }}
             body.dark-mode .search-bar input:focus {{ border-color: #667eea; }}
-            body.dark-mode .filter-row input, body.dark-mode .filter-row select {{
+            body.dark-mode .filter-row input, body.dark-mode .filter-row select,
+            body.dark-mode .sort-row select {{
                 background: #3d3d56; color: #dfe6e9; border-color: #3d3d56;
             }}
             body.dark-mode .quick-btns button {{
@@ -442,6 +456,22 @@ def generate_html_report(
             <button data-type="推荐关注" onclick="quickFilter('推荐关注')">⭐ 推荐关注</button>
             <button data-type="注意风险" onclick="quickFilter('注意风险')">⚠️ 风险</button>
             <button data-type="top20" onclick="quickFilter('top20')">🏆 Top20</button>
+        </div>
+        <div class="sort-row">
+            <label for="sortBy">📊 排序依据:</label>
+            <select id="sortBy" onchange="changeSort()">
+                <option value="total_score">综合评分</option>
+                <option value="valuation_score">估值</option>
+                <option value="fundamental_score">基本面</option>
+                <option value="volume_score">量能</option>
+                <option value="momentum_score">动量</option>
+                <option value="capital_flow_score">资金流</option>
+            </select>
+            <label for="sortDir">方向:</label>
+            <select id="sortDir" onchange="changeSort()">
+                <option value="desc">↓ 从高到低</option>
+                <option value="asc">↑ 从低到高</option>
+            </select>
         </div>
         <div class="result-count">共 <strong id="stockCount">0</strong> 只股票</div>
         <div class="stock-grid" id="stockGrid"></div>
@@ -544,11 +574,39 @@ function quickFilter(type) {{
   for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
   var activeBtn = document.querySelector('.quick-btns button[data-type="' + type + '"]');
   if (activeBtn) activeBtn.classList.add('active');
-  if (type === 'all') renderCards(allStocks);
-  else if (type === 'top20') {{
-    var sorted = [].concat(allStocks).sort(function(a,b){{return b.total_score-a.total_score}}).slice(0,20);
-    renderCards(sorted);
-  }} else renderCards(allStocks.filter(function(s){{return s.action===type}}));
+  window._currentFilter = type;
+  applyFilterAndSort();
+}}
+
+function applyFilterAndSort() {{
+  var type = window._currentFilter || 'all';
+  var factor = document.getElementById('sortBy').value;
+  var dir = document.getElementById('sortDir').value;
+  var filtered;
+  if (type === 'all') {{
+    filtered = [].concat(allStocks);
+  }} else if (type === 'top20') {{
+    filtered = [].concat(allStocks).sort(function(a,b){{return (b.total_score||0)-(a.total_score||0)}}).slice(0,20);
+    filtered.sort(function(a,b){{
+      var va = a[factor] != null ? a[factor] : 0;
+      var vb = b[factor] != null ? b[factor] : 0;
+      return dir === 'desc' ? vb - va : va - vb;
+    }});
+    renderCards(filtered);
+    return;
+  }} else {{
+    filtered = allStocks.filter(function(s){{return s.action===type}});
+  }}
+  filtered.sort(function(a,b){{
+    var va = a[factor] != null ? a[factor] : 0;
+    var vb = b[factor] != null ? b[factor] : 0;
+    return dir === 'desc' ? vb - va : va - vb;
+  }});
+  renderCards(filtered);
+}}
+
+function changeSort() {{
+  applyFilterAndSort();
 }}
 
 function hideDetail() {{ document.getElementById('detailPanel').style.display = 'none'; }}
@@ -720,9 +778,9 @@ function drawPriceChart(symbol) {{
   ctx.fillText(data[data.length-1].date.slice(0,7), W-pr, H-14);
 }}
 
+window._currentFilter = 'top20';
 if (allStocks.length > 0) {{
-  var top20 = [].concat(allStocks).sort(function(a,b){{return b.total_score-a.total_score}}).slice(0,20);
-  renderCards(top20);
+  applyFilterAndSort();
 }}
 </script>
 </body>
