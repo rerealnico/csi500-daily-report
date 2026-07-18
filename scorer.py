@@ -82,11 +82,20 @@ def calculate_final_scores(
     # 2. 确保索引无重复
     merged = merged.reset_index(drop=True)
 
-    # 3. 处理缺失值
-    merged["valuation_score"] = merged.get("valuation_score", 50).fillna(50).astype(float)
-    merged["volume_score"] = merged.get("volume_score", 50).fillna(50).astype(float)
-    merged["fundamental_score"] = merged.get("fundamental_score", 50).fillna(50).astype(float)
-    merged["capital_flow_score"] = merged.get("capital_flow_score", 50).fillna(50).astype(float)
+    # 3. 处理缺失值（保守原则：数据不全给低分35而非中分50）
+    score_cols = ["valuation_score", "volume_score", "fundamental_score", "capital_flow_score"]
+    merged["data_incomplete"] = False
+    for c in score_cols:
+        if c not in merged.columns:
+            merged[c] = 35.0
+            merged["data_incomplete"] = True
+            print(f"  [WARN] 缺少 {c} 数据，统一填充保守值35分")
+        else:
+            n_na = merged[c].isna().sum()
+            if n_na > 0:
+                merged["data_incomplete"] = True
+                print(f"  [WARN] {c} 有 {n_na} 只股票缺失，填充保守值35分")
+            merged[c] = merged[c].fillna(35).astype(float)
 
     # 4. 动量因子：用价格趋势计算
     if "price_trend_5d" in merged.columns:
@@ -94,7 +103,9 @@ def calculate_final_scores(
             _price_trend_to_score
         ).astype(float)
     else:
-        merged["momentum_score"] = 50.0
+        merged["momentum_score"] = 35.0
+        merged["data_incomplete"] = True
+        print(f"  [WARN] 缺少价格趋势数据，动量填充保守值35分")
 
     # 5. 综合评分（用.values避免索引对齐问题）
     merged["total_score"] = (

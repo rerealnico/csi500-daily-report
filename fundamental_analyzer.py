@@ -266,15 +266,17 @@ def calculate_fundamental_scores(fundamentals: pd.DataFrame) -> pd.DataFrame:
         + config["cashflow_weight"] * df["cashflow_score"].values
     )
 
-    # 7. 亏损惩罚：亏损股基础分打3折，且永远不能超过40分
-    loss_mask = df["is_loss"]
-    df.loc[loss_mask, "fundamental_score"] = df.loc[loss_mask, "fundamental_score"] * 0.3
-    df.loc[loss_mask, "fundamental_score"] = df.loc[loss_mask, "fundamental_score"].clip(upper=40)
-
-    # 8. 无数据保护
+    # 7. 无数据保护（提前处理，减少无效计算）
     df.loc[~df["has_data"], "fundamental_score"] = 30.0
+    df.loc[~df["has_data"], "is_loss"] = False
 
-    print(f"  [OK] 基本面评分完成 | 亏损股: {loss_mask.sum()} 只")
+    # 8. 亏损惩罚（根据配置决定是否启用）
+    if FUNDAMENTAL_CONFIG["filters"]["penalize_loss"]:
+        loss_mask = df["is_loss"]
+        df.loc[loss_mask, "fundamental_score"] = df.loc[loss_mask, "fundamental_score"] * 0.3
+        df.loc[loss_mask, "fundamental_score"] = df.loc[loss_mask, "fundamental_score"].clip(upper=40)
+
+    print(f"  [OK] 基本面评分完成 | 亏损股: {df['is_loss'].sum()} 只")
     print(f"        得分范围: {df['fundamental_score'].min():.1f} ~ {df['fundamental_score'].max():.1f}")
     return df
 

@@ -72,7 +72,7 @@ FUNDAMENTAL_CONFIG = {
         "cashflow_weight": 0.15,
     },
     "filters": {
-        "exclude_loss": True,  # 排除亏损股
+        "penalize_loss": True,  # 亏损股评分打折（打3折+上限40分）
         "min_roe": 0.0,        # ROE最低要求
     },
 }

@@ -53,7 +53,11 @@ def calculate_valuation_scores(
             10.0,  # 亏损股：PE为负 → 固定低分
             100 * (1 - merged["pe_rank"])  # 正常PE：越低PE分越高
         )
-        merged["pb_score"] = 100 * (1 - merged["pb_rank"])
+        merged["pb_score"] = np.where(
+            merged["pb"].notna() & (merged["pb"] < 0),
+            10.0,  # 资不抵债：PB为负 → 固定低分
+            100 * (1 - merged["pb_rank"])  # 正常PB：越低PB分越高
+        )
         merged["price_score"] = _price_percentile_to_score(merged["close_percentile"])
 
         merged["valuation_score"] = (
