@@ -11,12 +11,40 @@ from datetime import datetime, timedelta
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, TimeoutError as _TimeoutError
 from pathlib import Path
 from config import CSI500_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE, CACHE_CONFIG
+from config import CACHE_META_FILE, CACHE_VERSION
 
 # 单只股票 baostock 查询超时（秒），防止个别退市/异常股票无限挂起
 _STOCK_TIMEOUT = 30
 
 
-# ========== 成分股获取（akshare） ==========
+# ========== 缓存版本校验 ==========
+
+def _check_cache_version() -> bool:
+    """检查缓存版本是否匹配，不匹配时返回False触发全量刷新"""
+    if not CACHE_META_FILE.exists():
+        return False
+    try:
+        import json
+        meta = json.loads(CACHE_META_FILE.read_text(encoding="utf-8"))
+        stored = meta.get("kline_version", "")
+        if stored == CACHE_VERSION:
+            return True
+        print(f"  [缓存] 版本不匹配: 缓存={stored}, 当前={CACHE_VERSION}，全量刷新")
+        return False
+    except Exception as e:
+        print(f"  [缓存] 元数据读取失败: {e}，全量刷新")
+        return False
+
+
+def _save_cache_version():
+    """保存当前缓存版本标识"""
+    import json
+    meta = {"kline_version": CACHE_VERSION, "updated_at": datetime.now().isoformat()}
+    try:
+        CACHE_META_FILE.parent.mkdir(exist_ok=True)
+        CACHE_META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"  [WARN] 缓存元数据保存失败: {e}")
 
 def fetch_csi500_constituents() -> pd.DataFrame:
     """
@@ -104,19 +132,25 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
     # 尝试加载缓存
     cached_df = None
     if KLINE_CACHE_FILE.exists():
-        # 检查缓存是否过期
-        mtime = datetime.fromtimestamp(Path(KLINE_CACHE_FILE).stat().st_mtime)
-        age_hours = (datetime.now() - mtime).total_seconds() / 3600
-        if age_hours > CACHE_CONFIG["kline_max_age_hours"]:
-            print(f"  [缓存] 缓存已过期 ({age_hours:.0f}小时 > {CACHE_CONFIG['kline_max_age_hours']}小时)，全量刷新")
+        # 缓存版本校验：版本不匹配时强制全量刷新
+        version_ok = _check_cache_version()
+        if not version_ok:
+            print(f"  [缓存] 版本不匹配，忽略旧缓存，全量刷新")
+            cached_df = None
         else:
-            print(f"[数据获取] 发现缓存文件，尝试增量更新...")
-            try:
-                cached_df = pd.read_parquet(KLINE_CACHE_FILE)
-                print(f"  [OK] 缓存包含 {cached_df['symbol'].nunique()} 只股票, {len(cached_df)} 条记录")
-            except Exception as e:
-                print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
-                cached_df = None
+            # 检查缓存是否过期
+            mtime = datetime.fromtimestamp(Path(KLINE_CACHE_FILE).stat().st_mtime)
+            age_hours = (datetime.now() - mtime).total_seconds() / 3600
+            if age_hours > CACHE_CONFIG["kline_max_age_hours"]:
+                print(f"  [缓存] 缓存已过期 ({age_hours:.0f}小时 > {CACHE_CONFIG['kline_max_age_hours']}小时)，全量刷新")
+            else:
+                print(f"[数据获取] 发现缓存文件，尝试增量更新...")
+                try:
+                    cached_df = pd.read_parquet(KLINE_CACHE_FILE)
+                    print(f"  [OK] 缓存包含 {cached_df['symbol'].nunique()} 只股票, {len(cached_df)} 条记录")
+                except Exception as e:
+                    print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
+                    cached_df = None
 
     if cached_df is not None and not cached_df.empty:
         # 检查缓存是否覆盖了所有请求的股票
@@ -234,6 +268,7 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
         result["symbol"] = result["symbol"].astype(str).str.zfill(6)
         result.to_parquet(KLINE_CACHE_FILE, index=False)
         print(f"  [缓存] 已保存 {len(result)} 条到 {KLINE_CACHE_FILE.name}")
+        _save_cache_version()  # 写入版本标识
     except Exception as e:
         print(f"  [WARN] 缓存保存失败: {e}")
 

@@ -12,6 +12,11 @@ DATA_DIR.mkdir(exist_ok=True)
 # 数据缓存
 KLINE_CACHE_FILE = DATA_DIR / "klines.parquet"
 FUNDA_CACHE_FILE = DATA_DIR / "fundamentals.parquet"
+CACHE_META_FILE = DATA_DIR / "cache_meta.json"
+
+# 缓存版本标识
+# 每次改参数（adjustflag、查询年限等）后递增，确保历史缓存自动作废
+CACHE_VERSION = "v2_adj3"
 
 # 缓存过期配置
 CACHE_CONFIG = {
