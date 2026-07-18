@@ -120,7 +120,11 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
 
     if cached_df is not None and not cached_df.empty:
         # 检查缓存是否覆盖了所有请求的股票
+        # 规范化 symbol 类型（避免 int vs str 导致交集为空）
+        cached_df["symbol"] = cached_df["symbol"].astype(str).str.zfill(6)
         cached_symbols = set(cached_df["symbol"].unique())
+        # 规范化请求的 symbols
+        symbols = [str(s).zfill(6) for s in symbols]
         requested_symbols = set(symbols)
         if not requested_symbols.issubset(cached_symbols):
             missing = len(requested_symbols - cached_symbols)
@@ -128,7 +132,9 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
             # 不再全量刷新，直接用缓存数据
             symbols = sorted(cached_symbols & requested_symbols)
             if not symbols:
-                cached_df = None
+                # 完全无交集（可能缓存格式不匹配），直接返回全部缓存
+                print(f"  [缓存] 股票代码无交集，直接返回全部缓存数据（{len(cached_df)} 条）")
+                return cached_df
 
     if cached_df is not None and not cached_df.empty:
         # 增量模式：只拉缓存中最新日期之后的数据
@@ -225,6 +231,7 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
 
     # 保存缓存
     try:
+        result["symbol"] = result["symbol"].astype(str).str.zfill(6)
         result.to_parquet(KLINE_CACHE_FILE, index=False)
         print(f"  [缓存] 已保存 {len(result)} 条到 {KLINE_CACHE_FILE.name}")
     except Exception as e:
