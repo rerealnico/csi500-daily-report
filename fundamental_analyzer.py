@@ -11,10 +11,20 @@ import baostock as bs
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, TimeoutError as _TimeoutError
 from pathlib import Path
 from datetime import datetime
-from config import FUNDAMENTAL_CONFIG, FUNDA_CACHE_FILE, CACHE_CONFIG
+from config import FUNDAMENTAL_CONFIG, FUNDA_CACHE_FILE, CACHE_CONFIG, CACHE_VERSION, CACHE_META_FILE
+import json
 
 # 单只股票基本面查询超时（秒）
-_STOCK_TIMEOUT = 30
+_STOCK_TIMEOUT = 60
+
+# 静态数据目录（git跟踪，本地预生成）
+STATIC_FUNDA_DIR = Path(__file__).parent / "static_data"
+
+# 空数据模板
+_EMPTY_RECORD = {"roe": None, "np_margin": None, "gp_margin": None,
+                "net_profit": None, "eps_ttm": None, "revenue": None,
+                "liability_ratio": None, "asset_to_equity": None,
+                "cfo_to_np": None, "cfo_to_or": None, "has_data": False}
 
 
 # ========== 财务数据获取 ==========
@@ -51,40 +61,55 @@ def _to_bs_code(code: str) -> str:
 
 
 
-def _fetch_single_fundamental(code: str, year: int, quarter: int) -> dict:
-    """获取单只股票的基本面数据（独立login/query/logout）"""
+def _fetch_funda_chunk(symbol_list: list[tuple[str, str]], year: int, quarter: int) -> list | None:
+    """
+    拉取一批股票的基本面数据（一次 baostock login/logout）
+    symbol_list: list of (symbol, bs_code) tuples
+    返回 list[dict] 或 None（连接失败）
+    """
     lg = bs.login()
     if lg.error_code != "0":
-        return {}
+        return None
+
+    results = []
     try:
-        profit = _fetch_single_profit(code, year, quarter)
-        balance = _fetch_single_balance(code, year, quarter)
-        cashflow = _fetch_single_cashflow(code, year, quarter)
+        for sym, bs_code in symbol_list:
+            try:
+                profit = _fetch_single_profit(bs_code, year, quarter)
+                balance = _fetch_single_balance(bs_code, year, quarter)
+                cashflow = _fetch_single_cashflow(bs_code, year, quarter)
+                if not profit or not balance:
+                    d = {"symbol": sym}
+                    d.update(_EMPTY_RECORD)
+                    results.append(d)
+                else:
+                    def sf(v, default=None):
+                        try:
+                            return float(v) if v and v != "" else default
+                        except (ValueError, TypeError):
+                            return default
+
+                    results.append({
+                        "symbol": sym,
+                        "roe": sf(profit.get("roeAvg")),
+                        "np_margin": sf(profit.get("npMargin")),
+                        "gp_margin": sf(profit.get("gpMargin")),
+                        "net_profit": sf(profit.get("netProfit")),
+                        "eps_ttm": sf(profit.get("epsTTM")),
+                        "revenue": sf(profit.get("MBRevenue")),
+                        "liability_ratio": sf(balance.get("liabilityToAsset")),
+                        "asset_to_equity": sf(balance.get("assetToEquity")),
+                        "cfo_to_np": sf(cashflow.get("CFOToNP")),
+                        "cfo_to_or": sf(cashflow.get("CFOToOR")),
+                        "has_data": True,
+                    })
+            except Exception:
+                d = {"symbol": sym}
+                d.update(_EMPTY_RECORD)
+                results.append(d)
     finally:
         bs.logout()
-
-    if not profit or not balance:
-        return {}
-
-    def sf(v, default=None):
-        try:
-            return float(v) if v and v != "" else default
-        except (ValueError, TypeError):
-            return default
-
-    return {
-        "roe": sf(profit.get("roeAvg")),
-        "np_margin": sf(profit.get("npMargin")),
-        "gp_margin": sf(profit.get("gpMargin")),
-        "net_profit": sf(profit.get("netProfit")),
-        "eps_ttm": sf(profit.get("epsTTM")),
-        "revenue": sf(profit.get("MBRevenue")),
-        "liability_ratio": sf(balance.get("liabilityToAsset")),
-        "asset_to_equity": sf(balance.get("assetToEquity")),
-        "cfo_to_np": sf(cashflow.get("CFOToNP")),
-        "cfo_to_or": sf(cashflow.get("CFOToOR")),
-        "has_data": True,
-    }
+    return results
 
 
 def fetch_fundamentals(
@@ -94,7 +119,7 @@ def fetch_fundamentals(
     progress_callback=None,
 ) -> pd.DataFrame:
     """
-    批量获取基本面数据（串行拉取避免并发封IP）
+    批量获取基本面数据（3阶段：静态数据→缓存→chunk并行拉取）
 
     Parameters
     ----------
@@ -116,12 +141,39 @@ def fetch_fundamentals(
     if quarter is None:
         quarter = FUNDAMENTAL_CONFIG["quarter"]
 
-    # 尝试加载缓存
+    # === Phase 1: 静态数据（git跟踪，本地预生成） ===
+    static_file = STATIC_FUNDA_DIR / f"fundamentals_{year}_q{quarter}.parquet"
+    if static_file.exists():
+        try:
+            static_df = pd.read_parquet(static_file)
+            static_symbols = set(static_df["symbol"].tolist())
+            missing = [s for s in symbols if s not in static_symbols]
+            if not missing:
+                print(f"  [静态数据] 使用 git 跟踪的预生成数据 ({len(static_df)} 条)")
+                # 确保只有请求的symbol并按请求顺序返回
+                result = static_df[static_df["symbol"].isin(symbols)].reset_index(drop=True)
+                return result
+            else:
+                print(f"  [静态数据] 部分命中: {len(static_symbols & set(symbols))}/{len(symbols)} 只，缺少 {len(missing)} 只")
+        except Exception as e:
+            print(f"  [WARN] 静态数据读取失败: {e}")
+
+
+    # === Phase 2: 运行时缓存（含版本校验） ===
     cached_df = None
     if FUNDA_CACHE_FILE.exists():
+        # 版本校验：缓存元数据中的kline版本与当前CACHE_VERSION一致才有效
+        version_ok = True
+        if CACHE_META_FILE.exists():
+            try:
+                meta = json.loads(Path(CACHE_META_FILE).read_text("utf-8"))
+                version_ok = meta.get("kline_version") == CACHE_VERSION
+            except Exception:
+                version_ok = False
+
         mtime = datetime.fromtimestamp(Path(FUNDA_CACHE_FILE).stat().st_mtime)
         age_days = (datetime.now() - mtime).total_seconds() / 86400
-        if age_days <= CACHE_CONFIG["funda_max_age_days"]:
+        if age_days <= CACHE_CONFIG["funda_max_age_days"] and version_ok:
             try:
                 cached_df = pd.read_parquet(FUNDA_CACHE_FILE)
                 cached_symbols = set(cached_df["symbol"].tolist())
@@ -134,83 +186,80 @@ def fetch_fundamentals(
                 print(f"  [WARN] 缓存读取失败: {e}")
                 cached_df = None
         else:
-            print(f"  [缓存] 缓存已过期 ({age_days:.0f}天 > {CACHE_CONFIG['funda_max_age_days']}天)")
+            reason = f"过期({age_days:.0f}天)" if age_days > CACHE_CONFIG["funda_max_age_days"] else "版本不匹配"
+            print(f"  [缓存] 已跳过 ({reason})")
 
 
-
+    # === Phase 3: 从baostock获取（chunk方式，每chunk只login/logout一次） ===
     results = []
     total = len(symbols)
     fail_count = 0
 
-    _empty = {"roe": None, "np_margin": None, "gp_margin": None,
-               "net_profit": None, "eps_ttm": None, "revenue": None,
-               "liability_ratio": None, "asset_to_equity": None,
-               "cfo_to_np": None, "cfo_to_or": None, "has_data": False}
+    # 分3个chunk，每chunk ~167只，每chunk 1次login + N次query + 1次logout
+    chunk_size = max(1, total // 3)
+    chunks = [symbols[i:i + chunk_size] for i in range(0, total, chunk_size)]
+    # 限制最多3个chunk
+    chunks = chunks[:3]
+    # 若最后一块太小则合并到前一块
+    if len(chunks) > 1 and len(chunks[-1]) < 10:
+        chunks[-2].extend(chunks[-1])
+        chunks = chunks[:-1]
 
-    pool = ProcessPoolExecutor(max_workers=3)
-    futures = {}
-    idx = 0
+    symbol_chunks = [[(s, _to_bs_code(s)) for s in chunk] for chunk in chunks]
+
+    print(f"  [拉取] 从 baostock 获取（{total} 只，分{len(chunks)}个chunk并行）")
+
+    pool = ProcessPoolExecutor(max_workers=len(chunks))
+    futures = {pool.submit(_fetch_funda_chunk, sc, year, quarter): i for i, sc in enumerate(symbol_chunks)}
+
     completed = 0
-
-    # 初始批次——3个worker并行
-    while idx < total and len(futures) < 3:
-        bs_code = _to_bs_code(symbols[idx])
-        futures[pool.submit(_fetch_single_fundamental, bs_code, year, quarter)] = symbols[idx]
-        idx += 1
-
     try:
-        while futures:
-            done, pending = wait(futures, return_when=FIRST_COMPLETED, timeout=_STOCK_TIMEOUT)
-
-            if not done:
-                for f in pending:
-                    sym = futures[f]
-                    print(f"  [WARN] {sym} 基本面超时（>{_STOCK_TIMEOUT}s），已跳过")
-                    fail_count += 1
-                    completed += 1
-                break
-
-            for f in done:
-                sym = futures.pop(f)
-                completed += 1
-                try:
-                    data = f.result()
-                    if data:
-                        data["symbol"] = sym
-                        results.append(data)
-                    else:
-                        fail_count += 1
+        done, _ = wait(futures, timeout=_STOCK_TIMEOUT * 5)
+        for f in done:
+            chunk_idx = futures[f]
+            try:
+                chunk_results = f.result()
+                if chunk_results is None:
+                    # chunk连接失败，每只股票记为空
+                    print(f"  [WARN] chunk {chunk_idx} 连接baostock失败")
+                    for sym, _ in symbol_chunks[chunk_idx]:
                         d = {"symbol": sym}
-                        d.update(_empty)
+                        d.update(_EMPTY_RECORD)
                         results.append(d)
-                except Exception as e:
-                    fail_count += 1
+                        fail_count += 1
+                else:
+                    for r in chunk_results:
+                        results.append(r)
+                        if not r.get("has_data", False):
+                            fail_count += 1
+            except Exception as e:
+                print(f"  [WARN] chunk {chunk_idx} 异常: {e}")
+                for sym, _ in symbol_chunks[chunk_idx]:
                     d = {"symbol": sym}
-                    d.update(_empty)
+                    d.update(_EMPTY_RECORD)
                     results.append(d)
-                    print(f"  [WARN] {sym} 基本面异常: {e}")
+                    fail_count += 1
+            completed += 1
+            print(f"  [进度] chunk {chunk_idx+1}/{len(chunks)} 完成")
 
-                if completed % 50 == 0 or completed == total:
-                    pct = completed / total * 100
-                    print(f"  [进度] {completed}/{total} ({pct:.0f}%) | 失败: {fail_count}")
-                    if progress_callback:
-                        progress_callback(completed, total)
-
-            while idx < total and len(futures) < 3:
-                bs_code = _to_bs_code(symbols[idx])
-                futures[pool.submit(_fetch_single_fundamental, bs_code, year, quarter)] = symbols[idx]
-                idx += 1
-
-            time.sleep(0.05)
+        # 未完成的（timeout）同样处理
+        for f in set(futures) - done:
+            chunk_idx = futures[f]
+            print(f"  [WARN] chunk {chunk_idx} 超时")
+            for sym, _ in symbol_chunks[chunk_idx]:
+                d = {"symbol": sym}
+                d.update(_EMPTY_RECORD)
+                results.append(d)
+                fail_count += 1
     finally:
         pool.shutdown(wait=False)
 
     df = pd.DataFrame(results)
-    print(f"  [OK] 基本面数据获取完成，{len(df) - fail_count}/{total} 成功")
+    success = total - fail_count
+    print(f"  [OK] 基本面数据获取完成，{success}/{total} 成功")
 
-    # 保存缓存
+    # 保存缓存（版本匹配时覆盖，否则不写）
     try:
-        # 如果有旧缓存，合并后保存
         if cached_df is not None and not cached_df.empty:
             combined = pd.concat([cached_df, df], ignore_index=True)
             combined = combined.drop_duplicates(subset=["symbol"], keep="last")

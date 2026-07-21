@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, TimeoutError as _TimeoutError
 from pathlib import Path
 from config import CSI500_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE, CACHE_CONFIG
-from config import CACHE_META_FILE, CACHE_VERSION
+from config import CACHE_META_FILE, CACHE_VERSION, STATIC_DATA_DIR
 
 # 单只股票 baostock 查询超时（秒），防止个别退市/异常股票无限挂起
 _STOCK_TIMEOUT = 30
@@ -151,6 +151,18 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
                 except Exception as e:
                     print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
                     cached_df = None
+
+    # 如果没有缓存，尝试从静态基线加载（用于 GH Actions 无缓存场景）
+    if cached_df is None:
+        static_kline_file = STATIC_DATA_DIR / "klines_base.parquet"
+        if static_kline_file.exists():
+            try:
+                cached_df = pd.read_parquet(static_kline_file)
+                cached_df["symbol"] = cached_df["symbol"].astype(str).str.zfill(6)
+                print(f"  [静态基线] 加载静态行情基线: {cached_df['symbol'].nunique()} 只股票, {len(cached_df)} 条")
+            except Exception as e:
+                print(f"  [WARN] 静态基线加载失败: {e}")
+                cached_df = None
 
     if cached_df is not None and not cached_df.empty:
         # 检查缓存是否覆盖了所有请求的股票

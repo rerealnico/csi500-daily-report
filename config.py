@@ -9,6 +9,10 @@ PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+# 静态数据目录（可提交到 git，用于 GH Actions 回退）
+STATIC_DATA_DIR = PROJECT_ROOT / "static_data"
+STATIC_DATA_DIR.mkdir(exist_ok=True)
+
 # 数据缓存
 KLINE_CACHE_FILE = DATA_DIR / "klines.parquet"
 FUNDA_CACHE_FILE = DATA_DIR / "fundamentals.parquet"
