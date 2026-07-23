@@ -1,5 +1,5 @@
 """
-配置文件 - 中证500每日复盘分析系统
+配置文件 - 沪深300+中证500 多因子分析系统
 """
 from pathlib import Path
 from datetime import datetime
@@ -17,6 +17,8 @@ STATIC_DATA_DIR.mkdir(exist_ok=True)
 KLINE_CACHE_FILE = DATA_DIR / "klines.parquet"
 FUNDA_CACHE_FILE = DATA_DIR / "fundamentals.parquet"
 CACHE_META_FILE = DATA_DIR / "cache_meta.json"
+HS300_CACHE_FILE = DATA_DIR / "hs300_constituents.csv"
+CSI500_CACHE_FILE = DATA_DIR / "csi500_constituents.csv"
 
 # 缓存版本标识
 # 每次改参数（adjustflag、查询年限等）后递增，确保历史缓存自动作废
@@ -30,6 +32,9 @@ CACHE_CONFIG = {
 
 # 中证500 指数代码
 CSI500_INDEX_CODE = "000905"
+
+# 沪深300 指数代码
+HS300_INDEX_CODE = "000300"
 
 # 估值分析参数
 VALUATION_CONFIG = {

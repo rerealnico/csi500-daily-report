@@ -1,4 +1,4 @@
-name: 📊 中证500每日复盘
+name: 沪深300+中证500 多因子分析
 
 on:
   schedule:
@@ -63,5 +63,5 @@ jobs:
 
       - name: 完成通知
         run: |
-          echo "✅ 中证500每日复盘分析完成！"
-          echo "☁️ Cloudflare Pages: https://csi500-daily-report.pages.dev/report.html"
+          echo "沪深300+中证500 多因子分析完成！"
+          echo "Cloudflare Pages: https://csi500-daily-report.pages.dev/report.html"

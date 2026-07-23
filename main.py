@@ -1,5 +1,5 @@
 """
-主程序 - 中证500每日复盘分析系统 P0 版
+主程序 - 沪深300+中证500 多因子分析系统
 一键运行：python main.py
 """
 import io
@@ -10,12 +10,14 @@ if sys.stdout.encoding != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 import time
 import traceback
+import pandas as pd
 from datetime import datetime
 
 from config import REPORT_CONFIG
 from config import FUNDAMENTAL_CONFIG
 from data_fetcher import (
     fetch_csi500_constituents,
+    fetch_hs300_constituents,
     fetch_daily_klines,
     fetch_latest_trade_date,
 )
@@ -43,13 +45,15 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
     """
     start_time = time.time()
     print("=" * 60)
-    print(f"  CSI 500 每日复盘分析系统  v0.1 (P0)")
+    print(f"  沪深300+中证500 多因子分析系统")
     print(f"  运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
     # ===== Step 1: 获取成分股 =====
-    print("\n[Step 1/7] 获取中证500成分股")
-    constituents = fetch_csi500_constituents()
+    print("\n[Step 1/7] 获取沪深300+中证500成分股")
+    csi500 = fetch_csi500_constituents()
+    hs300 = fetch_hs300_constituents()
+    constituents = pd.concat([csi500, hs300], ignore_index=True).drop_duplicates(subset="symbol").reset_index(drop=True)
 
     if test_mode:
         # 测试模式只取前10只

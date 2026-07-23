@@ -1,5 +1,5 @@
 """
-HTML 报告生成模块
+HTML 报告生成模块 - 沪深300+中证500 多因子分析
 生成美观的 HTML 页面，内嵌图表，发布到 GitHub Pages
 """
 import json
@@ -109,7 +109,7 @@ def generate_html_report(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>中证500 股票分析 — {report_date}</title>
+    <title>沪深300+中证500 股票分析 — {report_date}</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
@@ -432,7 +432,7 @@ def generate_html_report(
     <!-- Header -->
     <button class="theme-toggle" onclick="toggleDarkMode()" title="切换暗色模式">🌙</button>
     <div class="header">
-        <h1>📈 中证500 多因子分析</h1>
+        <h1>沪深300+中证500 多因子分析</h1>
         <div class="date">报告日期: {report_date}</div>
         <div class="sub">数据来源: baostock | 评分模型: 估值+基本面+量能+动量+量价配合</div>
     </div>

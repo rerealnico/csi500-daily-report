@@ -10,8 +10,9 @@ import baostock as bs
 from datetime import datetime, timedelta
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, TimeoutError as _TimeoutError
 from pathlib import Path
-from config import CSI500_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE, CACHE_CONFIG
+from config import CSI500_INDEX_CODE, HS300_INDEX_CODE, DATA_DIR, KLINE_CACHE_FILE, CACHE_CONFIG
 from config import CACHE_META_FILE, CACHE_VERSION, STATIC_DATA_DIR
+from config import HS300_CACHE_FILE, CSI500_CACHE_FILE
 
 # 单只股票 baostock 查询超时（秒），防止个别退市/异常股票无限挂起
 _STOCK_TIMEOUT = 30
@@ -62,11 +63,38 @@ def fetch_csi500_constituents() -> pd.DataFrame:
         df["stock_code"] = df["stock_code"].astype(str).str.zfill(6)
         df["symbol"] = df["stock_code"]
         print(f"  [OK] 获取到 {len(df)} 只成分股")
-        df.to_csv(DATA_DIR / "csi500_constituents.csv", index=False, encoding="utf-8")
+        df.to_csv(CSI500_CACHE_FILE, index=False, encoding="utf-8")
         return df
     except Exception as e:
         print(f"  [ERROR] 拉取成分股失败: {e}")
-        cache_file = DATA_DIR / "csi500_constituents.csv"
+        cache_file = CSI500_CACHE_FILE
+        if cache_file.exists():
+            print("  [WARN] 使用本地缓存数据")
+            return pd.read_csv(cache_file, dtype={"stock_code": str})
+        raise
+
+
+def fetch_hs300_constituents() -> pd.DataFrame:
+    """
+    获取沪深300最新成分股列表
+    返回: DataFrame 包含 stock_code, stock_name, weight, symbol
+    """
+    print("[数据获取] 正在拉取沪深300成分股列表...")
+    try:
+        df = ak.index_stock_cons_weight_csindex(symbol=HS300_INDEX_CODE)
+        df = df.rename(columns={
+            "成分券代码": "stock_code",
+            "成分券名称": "stock_name",
+            "权重": "weight"
+        })
+        df["stock_code"] = df["stock_code"].astype(str).str.zfill(6)
+        df["symbol"] = df["stock_code"]
+        print(f"  [OK] 获取到 {len(df)} 只成分股")
+        df.to_csv(HS300_CACHE_FILE, index=False, encoding="utf-8")
+        return df
+    except Exception as e:
+        print(f"  [ERROR] 拉取成分股失败: {e}")
+        cache_file = HS300_CACHE_FILE
         if cache_file.exists():
             print("  [WARN] 使用本地缓存数据")
             return pd.read_csv(cache_file, dtype={"stock_code": str})

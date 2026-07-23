@@ -35,7 +35,7 @@ def generate_report(
 
     lines = []
     lines.append("=" * 60)
-    lines.append(f"  CSI 500 每日复盘报告    {report_date}")
+    lines.append(f"  沪深300+中证500 多因子分析日报    {report_date}")
     lines.append("=" * 60)
 
     if top_stocks:
