@@ -148,25 +148,85 @@ def _fetch_single_bs_klines(symbol: str, start: str, end: str) -> pd.DataFrame |
     return df
 
 
+def _batch_fetch_klines(symbols: list[str], start: str, end: str) -> tuple[list[pd.DataFrame], int]:
+    """
+    批量拉取K线数据（多进程，3并发）
+    返回: (dataframe列表, 失败数)
+    """
+    if not symbols:
+        return [], 0
+
+    all_dfs = []
+    fail_count = 0
+    total = len(symbols)
+    completed = 0
+
+    pool = ProcessPoolExecutor(max_workers=3)
+    futures = {}
+    idx = 0
+
+    # 初始批次
+    while idx < total and len(futures) < 3:
+        futures[pool.submit(_fetch_single_bs_klines, symbols[idx], start, end)] = symbols[idx]
+        idx += 1
+
+    try:
+        while futures:
+            done, pending = wait(futures, return_when=FIRST_COMPLETED, timeout=_STOCK_TIMEOUT)
+
+            if not done:
+                for f in pending:
+                    sym = futures[f]
+                    print(f"  [WARN] {sym} 超时（>{_STOCK_TIMEOUT}s），已跳过")
+                    fail_count += 1
+                    completed += 1
+                break
+
+            for f in done:
+                sym = futures.pop(f)
+                completed += 1
+                try:
+                    df = f.result()
+                    if df is not None and not df.empty:
+                        all_dfs.append(df)
+                    else:
+                        fail_count += 1
+                except Exception as e:
+                    fail_count += 1
+                    print(f"  [WARN] {sym} 异常: {e}")
+
+                if completed % 50 == 0 or completed == total:
+                    print(f"  [进度] {completed}/{total} (失败: {fail_count})")
+
+            while idx < total and len(futures) < 3:
+                futures[pool.submit(_fetch_single_bs_klines, symbols[idx], start, end)] = symbols[idx]
+                idx += 1
+
+            time.sleep(0.05)
+    finally:
+        pool.shutdown(wait=False)
+
+    return all_dfs, fail_count
+
+
 def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2) -> pd.DataFrame:
     """
-    批量获取个股日线行情（baostock，含PE/PB）— 串行拉取避免并发封IP
+    批量获取个股日线行情（baostock，含PE/PB）
     - 有缓存 → 增量拉取（只补最新数据）
     - 无缓存 → 全量拉取 years 年
+    - 缓存缺部分股票 → 缓存部分增量，缺失部分全量拉取
     """
     if end_date is None:
         end_date = datetime.now().strftime("%Y%m%d")
 
-    # 尝试加载缓存
+    # === Phase 0: 加载缓存 ===
     cached_df = None
     if KLINE_CACHE_FILE.exists():
-        # 缓存版本校验：版本不匹配时强制全量刷新
         version_ok = _check_cache_version()
         if not version_ok:
             print(f"  [缓存] 版本不匹配，忽略旧缓存，全量刷新")
             cached_df = None
         else:
-            # 检查缓存是否过期
             mtime = datetime.fromtimestamp(Path(KLINE_CACHE_FILE).stat().st_mtime)
             age_hours = (datetime.now() - mtime).total_seconds() / 3600
             if age_hours > CACHE_CONFIG["kline_max_age_hours"]:
@@ -180,7 +240,7 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
                     print(f"  [WARN] 缓存文件读取失败: {e}，重新全量拉取")
                     cached_df = None
 
-    # 如果没有缓存，尝试从静态基线加载（用于 GH Actions 无缓存场景）
+    # 缓存不存在时，尝试从静态基线加载
     if cached_df is None:
         static_kline_file = STATIC_DATA_DIR / "klines_base.parquet"
         if static_kline_file.exists():
@@ -192,114 +252,78 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
                 print(f"  [WARN] 静态基线加载失败: {e}")
                 cached_df = None
 
+    # === Phase 1: 检查缓存覆盖范围，分离缺失股票 ===
+    missing_symbols = []
     if cached_df is not None and not cached_df.empty:
-        # 检查缓存是否覆盖了所有请求的股票
-        # 规范化 symbol 类型（避免 int vs str 导致交集为空）
         cached_df["symbol"] = cached_df["symbol"].astype(str).str.zfill(6)
         cached_symbols = set(cached_df["symbol"].unique())
-        # 规范化请求的 symbols
         symbols = [str(s).zfill(6) for s in symbols]
         requested_symbols = set(symbols)
-        if not requested_symbols.issubset(cached_symbols):
-            missing = len(requested_symbols - cached_symbols)
-            print(f"  [缓存] 缓存缺 {missing} 只股票，使用缓存数据（跳过缺失股票）")
-            # 不再全量刷新，直接用缓存数据
-            symbols = sorted(cached_symbols & requested_symbols)
-            if not symbols:
-                # 完全无交集（可能缓存格式不匹配），直接返回全部缓存
-                print(f"  [缓存] 股票代码无交集，直接返回全部缓存数据（{len(cached_df)} 条）")
-                return cached_df
+        missing_symbols = sorted(requested_symbols - cached_symbols)
+        if missing_symbols:
+            print(f"  [缓存] 缓存缺 {len(missing_symbols)} 只股票，将单独全量拉取")
+        symbols = sorted(cached_symbols & requested_symbols)
 
-    if cached_df is not None and not cached_df.empty:
-        # 增量模式：只拉缓存中最新日期之后的数据
+    # 预计算全量日期范围（缺失股票或无缓存时使用）
+    start_full_date = (datetime.strptime(end_date, "%Y%m%d") -
+                       timedelta(days=years * 365 + 50)).strftime("%Y%m%d")
+    full_start = f"{start_full_date[:4]}-{start_full_date[4:6]}-{start_full_date[6:]}"
+    full_end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+
+    result = None
+
+    # === Phase 2: 增量更新缓存中的股票 ===
+    if cached_df is not None and not cached_df.empty and symbols:
         max_cached_date = cached_df["date"].max()
-        start = (max_cached_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        end = datetime.now().strftime("%Y-%m-%d")
-        print(f"  [增量] 缓存截止 {max_cached_date.strftime('%Y-%m-%d')}，只拉 {start} 之后的数据")
-        is_incremental = True
-    else:
-        # 全量模式
-        start_date = (datetime.strptime(end_date, "%Y%m%d") -
-                      timedelta(days=years * 365 + 50)).strftime("%Y%m%d")
-        start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
-        end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
-        print(f"[数据获取] 全量拉取 {len(symbols)} 只股票（{start} ~ {end}）...")
-        is_incremental = False
+        inc_start = (max_cached_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        inc_end = datetime.now().strftime("%Y-%m-%d")
 
-    all_dfs = []
-    fail_count = 0
-    total = len(symbols)
-
-    pool = ProcessPoolExecutor(max_workers=3)
-    futures = {}
-    idx = 0
-    completed = 0
-
-    # 初始批次——3个worker并行
-    while idx < total and len(futures) < 3:
-        futures[pool.submit(_fetch_single_bs_klines, symbols[idx], start, end)] = symbols[idx]
-        idx += 1
-
-    try:
-        while futures:
-            done, pending = wait(futures, return_when=FIRST_COMPLETED, timeout=_STOCK_TIMEOUT)
-
-            if not done:
-                # 3个worker全部挂起（极低概率），跳过剩余
-                for f in pending:
-                    sym = futures[f]
-                    print(f"  [WARN] {sym} 超时（>{_STOCK_TIMEOUT}s），已跳过")
-                    fail_count += 1
-                    completed += 1
-                break
-
-            for f in done:
-                sym = futures.pop(f)
-                completed += 1
-                try:
-                    df = f.result()  # 已完成，无需wait
-                    if df is not None and not df.empty:
-                        all_dfs.append(df)
-                    else:
-                        fail_count += 1
-                except Exception as e:
-                    fail_count += 1
-                    print(f"  [WARN] {sym} 异常: {e}")
-
-                if completed % 50 == 0 or completed == total:
-                    print(f"  [进度] {completed}/{total} (失败: {fail_count})")
-
-            # 补充新任务，保持3并发
-            while idx < total and len(futures) < 3:
-                futures[pool.submit(_fetch_single_bs_klines, symbols[idx], start, end)] = symbols[idx]
-                idx += 1
-
-            time.sleep(0.05)
-    finally:
-        pool.shutdown(wait=False)
-
-    if not all_dfs and cached_df is None:
-        raise ValueError("未获取到任何股票数据")
-    elif not all_dfs and cached_df is not None:
-        # 全量拉取全部失败但缓存可用，直接使用缓存
-        print(f"  [缓存] 拉取失败，回退使用缓存数据")
-        result = cached_df
-        is_incremental = True
-
-    # 合并新旧数据
-    if is_incremental and cached_df is not None:
-        new_df = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
-        if not new_df.empty:
-            # 去重：按 symbol + date 去重，保留新的
-            combined = pd.concat([cached_df, new_df], ignore_index=True)
-            combined = combined.drop_duplicates(subset=["symbol", "date"], keep="last")
-            combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
-            result = combined
-            print(f"  [OK] 增量更新完成: 新增 {len(new_df)} 条，总计 {len(result)} 条")
-        else:
+        if inc_start > inc_end:
+            # 短路：缓存已是最新，无需拉取
+            print(f"  [缓存] 缓存已是最新（截止 {max_cached_date.strftime('%Y-%m-%d')}），跳过增量更新")
             result = cached_df
-            print(f"  [OK] 无新数据，使用缓存（{len(result)} 条）")
-    else:
+        else:
+            print(f"  [增量] 缓存截止 {max_cached_date.strftime('%Y-%m-%d')}，只拉 {inc_start} 之后的数据")
+            all_dfs, _ = _batch_fetch_klines(symbols, inc_start, inc_end)
+            if all_dfs:
+                new_df = pd.concat(all_dfs, ignore_index=True)
+                result = pd.concat([cached_df, new_df], ignore_index=True)
+                result = result.drop_duplicates(subset=["symbol", "date"], keep="last")
+                result = result.sort_values(["symbol", "date"]).reset_index(drop=True)
+                print(f"  [OK] 增量更新完成: 新增 {len(new_df)} 条，总计 {len(result)} 条")
+            else:
+                result = cached_df
+                print(f"  [OK] 无新数据，使用缓存（{len(result)} 条）")
+
+    # === Phase 3: 全量拉取缺失股票 ===
+    if missing_symbols:
+        print(f"  [缺失] 全量拉取 {len(missing_symbols)} 只缺失股票（{full_start} ~ {full_end}）...")
+        miss_dfs, _ = _batch_fetch_klines(missing_symbols, full_start, full_end)
+
+        if not miss_dfs:
+            if result is not None:
+                print(f"  [缺失] 缺失股票全量拉取全部失败，跳过")
+            else:
+                raise ValueError("未获取到任何股票数据")
+        else:
+            miss_result = pd.concat(miss_dfs, ignore_index=True)
+            print(f"  [缺失] 拉取完成: {miss_result['symbol'].nunique()} 只, {len(miss_result)} 条")
+
+            if result is not None:
+                result = pd.concat([result, miss_result], ignore_index=True)
+                result = result.drop_duplicates(subset=["symbol", "date"], keep="last")
+                result = result.sort_values(["symbol", "date"]).reset_index(drop=True)
+            else:
+                result = miss_result
+
+    # === Phase 4: 无缓存 — 全量拉取全部股票 ===
+    if result is None:
+        if not symbols:
+            raise ValueError("未获取到任何股票数据")
+        print(f"[数据获取] 全量拉取 {len(symbols)} 只股票（{full_start} ~ {full_end}）...")
+        all_dfs, fail_count = _batch_fetch_klines(symbols, full_start, full_end)
+        if not all_dfs:
+            raise ValueError("未获取到任何股票数据")
         result = pd.concat(all_dfs, ignore_index=True)
         print(f"  [OK] 全量拉取完成: {result['symbol'].nunique()} 只股票, {len(result)} 条记录")
 
@@ -308,7 +332,7 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
         result["symbol"] = result["symbol"].astype(str).str.zfill(6)
         result.to_parquet(KLINE_CACHE_FILE, index=False)
         print(f"  [缓存] 已保存 {len(result)} 条到 {KLINE_CACHE_FILE.name}")
-        _save_cache_version()  # 写入版本标识
+        _save_cache_version()
     except Exception as e:
         print(f"  [WARN] 缓存保存失败: {e}")
 
