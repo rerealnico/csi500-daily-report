@@ -276,7 +276,7 @@ def fetch_daily_klines(symbols: list[str], end_date: str = None, years: int = 2)
     if cached_df is not None and not cached_df.empty and symbols:
         max_cached_date = cached_df["date"].max()
         inc_start = (max_cached_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        inc_end = datetime.now().strftime("%Y-%m-%d")
+        inc_end = datetime.strptime(end_date, "%Y%m%d").strftime("%Y-%m-%d")
 
         if inc_start > inc_end:
             # 短路：缓存已是最新，无需拉取

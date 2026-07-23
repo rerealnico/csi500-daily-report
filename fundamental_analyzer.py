@@ -146,6 +146,7 @@ def fetch_fundamentals(
     if static_file.exists():
         try:
             static_df = pd.read_parquet(static_file)
+            static_df["symbol"] = static_df["symbol"].astype(str).str.zfill(6)  # 统一类型
             static_symbols = set(static_df["symbol"].tolist())
             missing = [s for s in symbols if s not in static_symbols]
             if not missing:
@@ -176,6 +177,7 @@ def fetch_fundamentals(
         if age_days <= CACHE_CONFIG["funda_max_age_days"] and version_ok:
             try:
                 cached_df = pd.read_parquet(FUNDA_CACHE_FILE)
+                cached_df["symbol"] = cached_df["symbol"].astype(str).str.zfill(6)  # 统一类型
                 cached_symbols = set(cached_df["symbol"].tolist())
                 need_fetch = [s for s in symbols if s not in cached_symbols]
                 if not need_fetch:
@@ -195,21 +197,20 @@ def fetch_fundamentals(
     total = len(symbols)
     fail_count = 0
 
-    # 分3个chunk，每chunk ~167只，每chunk 1次login + N次query + 1次logout
+    # 分chunk，控制并发数（最多3 worker并行），不丢数据
     chunk_size = max(1, total // 3)
     chunks = [symbols[i:i + chunk_size] for i in range(0, total, chunk_size)]
-    # 限制最多3个chunk
-    chunks = chunks[:3]
     # 若最后一块太小则合并到前一块
     if len(chunks) > 1 and len(chunks[-1]) < 10:
         chunks[-2].extend(chunks[-1])
         chunks = chunks[:-1]
 
     symbol_chunks = [[(s, _to_bs_code(s)) for s in chunk] for chunk in chunks]
+    n_workers = min(len(chunks), 3)
 
-    print(f"  [拉取] 从 baostock 获取（{total} 只，分{len(chunks)}个chunk并行）")
+    print(f"  [拉取] 从 baostock 获取（{total} 只，分{len(chunks)}个chunk，{n_workers} worker并行）")
 
-    pool = ProcessPoolExecutor(max_workers=len(chunks))
+    pool = ProcessPoolExecutor(max_workers=n_workers)
     futures = {pool.submit(_fetch_funda_chunk, sc, year, quarter): i for i, sc in enumerate(symbol_chunks)}
 
     completed = 0

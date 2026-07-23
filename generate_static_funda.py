@@ -10,16 +10,27 @@ from fundamental_analyzer import fetch_fundamentals, STATIC_FUNDA_DIR
 
 
 def main():
-    # 使用缓存的成分股列表
-    csv_path = DATA_DIR / "csi500_constituents.csv"
-    if not csv_path.exists():
+    # 使用缓存的成分股列表（CSI500 + HS300 合并）
+    csi500_path = DATA_DIR / "csi500_constituents.csv"
+    hs300_path = DATA_DIR / "hs300_constituents.csv"
+    
+    parts = []
+    for path, name in [(csi500_path, "中证500"), (hs300_path, "沪深300")]:
+        if not path.exists():
+            print(f"警告: {name} 缓存文件不存在 ({path.name})")
+            continue
+        df = pd.read_csv(path, dtype={"stock_code": str})
+        df["symbol"] = df["symbol"].astype(str).str.zfill(6)
+        parts.append(df)
+        print(f"{name}: {len(df)} 只")
+    
+    if not parts:
         print("错误: 无缓存成分股文件，请先运行 main.py --test 生成")
         sys.exit(1)
-
-    constituents = pd.read_csv(csv_path, dtype={"stock_code": str})
-    constituents["symbol"] = constituents["symbol"].astype(str).str.zfill(6)
+    
+    constituents = pd.concat(parts, ignore_index=True).drop_duplicates(subset="symbol").reset_index(drop=True)
     symbols = constituents["symbol"].tolist()
-    print(f"成分股: {len(symbols)} 只")
+    print(f"合并去重后: {len(symbols)} 只股票")
 
     # 创建静态数据目录
     STATIC_FUNDA_DIR.mkdir(exist_ok=True)

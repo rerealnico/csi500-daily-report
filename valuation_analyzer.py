@@ -124,7 +124,7 @@ def _price_percentile_to_score(percentile: pd.Series) -> pd.Series:
         np.where(
             percentile >= 0.8,
             np.maximum(0, 100 * (1 - percentile) * 5),
-            80 - 100 * (percentile - 0.2) / 0.6
+            np.maximum(0, 80 - 100 * (percentile - 0.2) / 0.6)
         )
     )
     return score
