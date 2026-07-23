@@ -118,19 +118,23 @@ def run_pipeline(max_stocks: int = None, test_mode: bool = False, cloud_mode: bo
         save_report(report_text)
 
         # 提取股价历史数据（用于 HTML 走势图）
+        # 只保留前 100 只（含 TopN 推荐），避免 HTML 文件过大（800只×200点=8MB）
         print(f"  [Step 6] 提取股价历史数据")
         price_history = {}
+        top_symbols = set(s["symbol"] for s in final_scores.head(100).to_dict("records"))
         if klines is not None and not klines.empty:
-            for symbol in klines['symbol'].unique():
+            for symbol in top_symbols:
                 stock_klines = klines[klines['symbol'] == symbol].sort_values('date')
                 if len(stock_klines) > 0:
-                    step = max(1, len(stock_klines) // 200)
+                    step = max(1, len(stock_klines) // 100)
                     sampled = stock_klines.iloc[::step]
                     price_history[symbol] = [
                         {"date": row['date'].strftime('%Y-%m-%d'), "close": round(float(row['close']), 2)}
                         for _, row in sampled.iterrows()
                     ]
-            print(f"    [OK] 已提取 {len(price_history)} 只股票的历史数据")
+                else:
+                    price_history[symbol] = []
+            print(f"    [OK] 已提取 {len(price_history)} 只股票的历史数据（含Top100）")
 
         # 生成 HTML 报告（用于 GitHub Pages）
         html_path = generate_html_report(

@@ -3,6 +3,7 @@ HTML 报告生成模块 - 沪深300+中证500 多因子分析
 生成美观的 HTML 页面，内嵌图表，发布到 GitHub Pages
 """
 import json
+import math
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
@@ -66,12 +67,12 @@ def generate_html_report(
                         item[k] = str(v) if not pd.isna(v) else ''
                     elif k == 'roe':
                         try:
-                            item[k] = round(float(v), 4) if v is not None and not pd.isna(v) else None
+                            item[k] = round(float(v), 4) if v is not None and not pd.isna(v) and not math.isinf(float(v)) else None
                         except (ValueError, TypeError):
                             item[k] = None
                     else:
                         try:
-                            item[k] = round(float(v), 1) if v is not None and not pd.isna(v) else None
+                            item[k] = round(float(v), 1) if v is not None and not pd.isna(v) and not math.isinf(float(v)) else None
                         except (ValueError, TypeError):
                             item[k] = None
                 clean.append(item)
